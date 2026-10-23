@@ -29,6 +29,11 @@ Use the selected mise Python runtime for those commands. Link core,
 DigiHealth and (for the showcase) Elekloader's `examples/hooks-check-dn2`.
 Keep the resulting firmware and exact link manifest together locally.
 
+**Showcase warning:** hooks-check draws five bars over every screen, erasing
+parts of the stock UI. This is intentional diagnostic drawing and can look
+like tearing. Its PERSONALIZE test also consumes TEMPO until reboot. Omit
+hooks-check from a normal DigiHealth build.
+
 ## Remote input and readback
 
 ```sh
@@ -93,4 +98,22 @@ and both refused DIN sources. Existing host key tests pass. For Digitakt
 1.53/1.54 and Digitone 1.44, the compiled sections, symbols, relocations and
 contracts are identical to the original checkout; source-provenance metadata
 differs as expected. Core alone matches stock in nine scripted screen captures.
-The port has not yet been flashed to a device.
+On 23 Oct 2026 the DS03 showcase flashed over USB and rebooted after the
+user pressed YES. Fresh device info reported DS03; HELLO and revision-3
+capabilities responded. Read-only comparison of all 7,204 immutable runtime
+bytes matched the exact linked candidate. Three clock comparisons differed
+from the host by at most 0.3%. The physical functional check passed all six
+UI events, encoder delivery, SETTINGS/PERSONALIZE callbacks after reopening,
+subscriber ordering and consumed versus pass-through TEMPO. Saved screens
+were reviewed independently of input acknowledgements. Longer project/audio
+acceptance remains separate; no SHARC/audio-quality claim is made.
+
+The follow-up DH03 build (core + DigiHealth only, no hooks-check) was
+installed with remote YES after verifying the update dialog. Its version
+and all 6,620 immutable runtime bytes matched. The clean UI, normal TEMPO,
+encoder input, automatic 120 ms hold expiry and SYSTEM INFO on/off were
+verified with fresh screens, stock key-state reads and published STATS.
+Lease expiry closes that input session; open a new one for subsequent
+actions. STATS publishes once a second, so poll for the new flag after a
+toggle rather than treating the previous snapshot as a failed toggle.
+The device was left on DH03 with SYSTEM INFO off and no held keys.
