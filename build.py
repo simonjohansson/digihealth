@@ -132,8 +132,8 @@ def main(argv=None):
     try:
         stock = syx.Syx.load(a.stock)
         dev, rel = devices.identify(stock.sha256)
-        if dev.key == 'digitone-mk1':
-            path, m = sdk.build(os.path.join(HERE, 'dn1'), a.stock, out)
+        if dev.key in ('digitone-mk1', 'digitone-mk2'):
+            path, m = sdk.build(os.path.join(HERE, 'dn2' if dev.key == 'digitone-mk2' else 'dn1'), a.stock, out)
             print('BUILT %s' % path)
             print('  %s: .run %d, .bss %d bytes; %d sites, %d relocations; SYSTEM INFO'
                   % (m.label(), m.size('.run'), m.size('.bss'), len(m.sites), len(m.relocs)))

@@ -18,5 +18,18 @@ for line in (Path(__file__).resolve().parents[1] / 'keys.def').read_text().split
         if code:
             MAPS[product][name] = (code, group, mask)
 
-SUPPORTED = {product: sum(1 << (KEYS[name] - 1) for name in mapping)
+MAPS[3] = {}
+DN2_IDS = {}
+for line in (Path(__file__).resolve().parents[1] / 'dn2/keys.def').read_text().splitlines():
+    if not line.startswith('KEY('):
+        continue
+    fields = next(csv.reader([line[4:-1]], skipinitialspace=True))
+    number, name, code, group, mask = fields
+    number, code, group, mask = (int(v, 0) for v in (number, code, group, mask))
+    if name in DN2_IDS or number in DN2_IDS.values() or not 1 <= number <= 64:
+        raise ValueError('invalid DN2 key definition')
+    DN2_IDS[name] = number
+    MAPS[3][name] = (code, group, mask)
+
+SUPPORTED = {product: sum(1 << ((DN2_IDS if product == 3 else KEYS)[name] - 1) for name in mapping)
              for product, mapping in MAPS.items()}

@@ -76,3 +76,16 @@ are outside this button map.
 Mapping provenance: Digitakt tables `0x4018e89c` (1.53) and `0x4018eb9c` (1.54);
 Digitone table `0x401a9084` (1.44). Firmware-backed tests assert every entry
 and observe the mapped UI IDs through the compiled driver/core.
+
+
+## Digitone II OS 1.12 (experimental, input revision 3)
+
+The complete DN2 logical ID/name/firmware-code/group/bit mapping is in
+[`dn2/keys.def`](../dn2/keys.def), shared by C and the client. There are
+54 buttons. Common names include FUNC, TRK, PTN, SONG, SETTINGS, VOICE,
+TEMPO, transport, arrows, PAGE, TRIG, FLTR, AMP, 1..16, A_PUSH..H_PUSH and
+LEVEL_PUSH. DN2 additionally uses SYN, FX, MOD, PRESET, KEYBOARD, ARP,
+PLUS, MINUS and NOTE_EDIT. Mk1-only names are refused before any action.
+
+Rotation is separate: `turn A..H DETENTS` or `turn LEVEL DETENTS`, bounded
+to nonzero -30..30 detents. The firmware's encoder codes are 1..9.

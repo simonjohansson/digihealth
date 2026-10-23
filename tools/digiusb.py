@@ -6,6 +6,8 @@
     python digiusb.py peek ADDR [LEN]      hex dump of DDR or the SRAM (0x8000xxxx)
     python digiusb.py dump ADDR LEN OUT    DDR to a file
     python digiusb.py selftest             check the encoder and decoder, no device
+    python digiusb.py turn A -3          Digitone II: bounded encoder turn
+    python digiusb.py screen OUTPUT.pbm  Digitone II: composed OLED readback
     python digiusb.py keys YES
     python digiusb.py keys 'FUNC(SRC)'
     python digiusb.py keys 'FUNC(SRC),DOWN,DOWN,DOWN,YES'
@@ -31,7 +33,8 @@ import secrets
 import struct
 import sys
 import time
-from keymap import KEYS, MAPS, SUPPORTED
+from keymap import KEYS, MAPS, SUPPORTED, DN2_IDS
+KEY_NAMES = set(KEYS) | set(DN2_IDS)
 
 HEADER = bytes([0xF0, 0x00, 0x20, 0x3C, 0x7D, 0x00])
 HELLO, STATS, PEEK = 0x01, 0x02, 0x03
@@ -39,7 +42,8 @@ STATUS = {0: 'ok', 1: 'refused', 2: 'unknown command', 3: 'busy',
           4: 'stale session or operation', 5: 'physical overlap',
           6: 'remote keys are off (SETTINGS > REMOTE KEYS)'}
 CAPS, OPEN, ACTION, KEY_STATUS, CANCEL = range(0x10, 0x15)
-PRESS, RELEASE, TAP = 1, 2, 3
+PRESS, RELEASE, TAP, TURN = 1, 2, 3, 4
+FRAME = 0x15
 KEY_STATES = ('none', 'accepted', 'completed', 'cancelled', 'expired', 'failed')
 PEEK_MAX = 1024
 # PEEK reads DDR (cached view) and the 64 KB SRAM, and never the peripheral
@@ -94,6 +98,10 @@ def req_stats(seq):
 
 def req_caps(seq):
     return request(seq, CAPS)
+
+
+def req_frame(seq):
+    return request(seq, FRAME)
 
 
 def req_open(seq, session):
@@ -182,7 +190,7 @@ class Diag:
 
     def call(self, builder, *args, timeout=2.0, tries=2):
         """Only known reads may be retried; actions need explicit status recovery."""
-        if builder not in (req_hello, req_stats, req_peek, req_caps, req_key_status):
+        if builder not in (req_hello, req_stats, req_peek, req_caps, req_key_status, req_frame):
             tries = 1
         if tries < 1:
             raise ValueError('tries must be positive')
@@ -204,7 +212,7 @@ class Diag:
         def answered(msgs):
             for m in msgs[len(found):]:
                 r = parse(m)
-                if CAPS <= cmd <= CANCEL and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
+                if CAPS <= cmd <= FRAME and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
                     r = None
                 found.append(r if r and r['seq'] == seq and r['cmd'] == cmd | 0x80 else None)
             return any(found)
@@ -227,7 +235,7 @@ class RemoteKeys:
         if len(payload) != 19:
             raise ValueError('invalid key capabilities')
         revision, product, major, minor, keys, default, tap, hold = struct.unpack('>HBBBQHHH', payload)
-        if (revision != 2 or (product, major, minor) not in ((1, 1, 53), (1, 1, 54), (2, 1, 44))
+        if ((revision, product, major, minor) not in ((2, 1, 1, 53), (2, 1, 1, 54), (2, 2, 1, 44), (3, 3, 1, 12))
                 or keys != SUPPORTED.get(product) or not 1 <= default <= tap <= 250
                 or not 1 <= hold <= 2000):
             raise ValueError('unsupported key helper, device, OS or limits')
@@ -273,10 +281,20 @@ class RemoteKeys:
         limit = self.max_hold if action == PRESS else self.max_tap
         if action == RELEASE and duration != 0 or action != RELEASE and not 1 <= duration <= limit:
             raise ValueError('invalid key duration')
+        return self._action(action, (DN2_IDS if self.product == 3 else KEYS)[key], duration)
+
+    def turn(self, encoder, detents):
+        if self.product != 3 or not isinstance(encoder, int) or not 1 <= encoder <= 9:
+            raise ValueError('encoder control requires Digitone II and encoder 1..9')
+        if not isinstance(detents, int) or detents == 0 or not -30 <= detents <= 30:
+            raise ValueError('use -30..30 detents, excluding zero')
+        return self._action(TURN, encoder, detents & 0xffff)
+
+    def _action(self, action, key, duration):
         self.operation += 1
         try:
             payload = self.diag.call(req_action, self.session, self.operation, action,
-                                     KEYS[key], duration, timeout=0.25)
+                                     key, duration, timeout=0.25)
             report = self._report(payload, self.operation)
         except _RequestRefused:
             self.operation -= 1
@@ -318,7 +336,7 @@ def key_sequence(text):
             raise argparse.ArgumentTypeError('use KEY or HOLD(TAP), separated by commas')
         outer, inner = match.groups()
         hold, tap = (outer, inner) if inner else (None, outer)
-        if tap not in KEYS or hold is not None and hold not in KEYS:
+        if tap not in KEY_NAMES or hold is not None and hold not in KEY_NAMES:
             raise argparse.ArgumentTypeError('unknown button in %r' % token.strip())
         if hold == tap:
             raise argparse.ArgumentTypeError('held and tapped buttons must differ')
@@ -421,6 +439,51 @@ def cmd_dump(d, args):
     print('saved %s (%d bytes from 0x%08x)' % (args[2], len(data), addr))
 
 
+def screen(diag):
+    def read():
+        payload = diag.call(req_frame)
+        if len(payload) != 1028:
+            raise ValueError('invalid screen reply')
+        generation, = struct.unpack_from('>I', payload)
+        if not generation:
+            raise ValueError('no composed screen yet')
+        return generation, payload
+    previous, _ = read()  # Also requests a draw after the UI input queue drains.
+    deadline = time.monotonic() + 3
+    while True:
+        generation, payload = read()
+        if generation != previous:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError('no fresh composed screen after input; stale frame refused')
+        time.sleep(.02)
+    pixels = payload[4:]
+    # Stock Bitmap is column-major, two big-endian words per 64-pixel column.
+    rows = [' '.join('1' if pixels[x * 8 + y // 8] & (0x80 >> (y % 8)) else '0'
+                     for x in range(128)) for y in range(63, -1, -1)]
+    return generation, ('P1\n128 64\n' + '\n'.join(rows) + '\n').encode('ascii')
+
+
+def cmd_screen(diag, args):
+    if len(args) != 1:
+        raise ValueError('use screen OUTPUT.pbm')
+    generation, data = screen(diag)
+    with open(args[0], 'wb') as fh:
+        fh.write(data)
+    print('saved %s (frame %d)' % (args[0], generation))
+
+
+def cmd_turn(diag, args):
+    if len(args) != 2:
+        raise ValueError('use turn ENCODER DETENTS (A..H or LEVEL)')
+    names = {chr(65 + i): i + 1 for i in range(8)} | {'LEVEL': 9}
+    if args[0].upper() not in names:
+        raise ValueError('encoder must be A..H or LEVEL')
+    with RemoteKeys(diag) as keys:
+        keys.turn(names[args[0].upper()], int(args[1]))
+    print('encoder action completed')
+
+
 def selftest():
     sx = req_peek(7, 0x4020bb14, 20)
     assert sx[:6] == HEADER and all(b < 0x80 for b in sx[1:-1])
@@ -446,7 +509,7 @@ def selftest():
     print('selftest ok')
 
 
-COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'keys': cmd_keys}
+COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
 
 
 def main(argv=None):
