@@ -17,8 +17,7 @@ Use an Elekloader checkout of `digitone-2-support`, m68k binutils/GCC and
 your own pinned stock OS 1.12.
 Its SHA-256 is
 `7e5b8a733d4ab1fdf7e5d22757f7d8eddaa3cbf71d0858874a791844c02ceb35`.
-No firmware or generated `.elemod`/map belongs in Git. Core 0.1 is the
-consolidated, unreleased version; the earlier development label was 0.3.
+No firmware or generated `.elemod`/map belongs in Git.
 
 ```sh
 ELEKLOADER_CROSS=m68k-elf- PYTHONPATH=/path/to/elekloader python build.py --stock /path/to/Digitone_II_OS1.12.syx
@@ -71,8 +70,7 @@ not an audio-quality or long-term stability claim.
 - Core owns the panel prologue, periodic counter and SysEx observer sites;
   see core-dn2's README and `tests/test_digitone2.py` for byte/ABI checks.
 - The main buddy heap is `0x4029f0dc`, with mutex `0x445e2e40`, derived
-  from the allocator at `0x401202c8`. This is not the earlier planning
-  address `0x4464bbf0`. Its base/list/order layout matches the established
+  from the allocator at `0x401202c8`. Its base/list/order layout matches the established
   bounded walk; stock-image and emulator checks qualify this port.
 - The existing Bitmap routines were matched by their instruction bodies
   and verified by the compiled overlay/menu run: invalidate `0x4011ca9a`,
@@ -117,4 +115,5 @@ verified with fresh screens, stock key-state reads and published STATS.
 Lease expiry closes that input session; open a new one for subsequent
 actions. STATS publishes once a second, so poll for the new flag after a
 toggle rather than treating the previous snapshot as a failed toggle.
-The device was left on DH03 with SYSTEM INFO off and no held keys.
+Candidate identities and remaining qualification work are recorded in the
+[DN2 PR preparation issue](https://github.com/simonjohansson/elekloader/issues/27).

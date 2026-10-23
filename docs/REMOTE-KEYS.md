@@ -95,8 +95,8 @@ can delay cleanup; stalls longer than the approximately 32.5-second counter
 wrap can cause further delay. Queue backpressure can also postpone a release.
 The client cancels in its context manager; disconnects rely on firmware leases.
 
-The panel bridge remains a private core candidate in DigiHealth. Released
-Elekloader core exports are unchanged.
+On the mk1 devices the panel bridge remains a private core candidate in
+DigiHealth. Released mk1 Elekloader core exports are unchanged.
 
 
 ## Digitone II extension (input revision 3)

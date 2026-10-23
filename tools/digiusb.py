@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Read digihealth diagnostics or operate bounded Digitakt/Digitone mk1 keys over USB MIDI.
+"""Read digihealth diagnostics or operate bounded Digitakt/Digitone input over USB MIDI.
 
     python digiusb.py cfw                  which mod answers, and its uptime
     python digiusb.py stats [N]            CPU, DSP, clock, heap: N readings, one a second

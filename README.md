@@ -12,7 +12,7 @@ three rows to SETTINGS:
 - **SYSTEM INFO** shows CPU, DSP, RAM and free sample memory in the top bar.
   A read-only USB diagnostics channel lets `tools/digiusb.py` read the same
   figures, and more, from a computer.
-- **REMOTE KEYS** (on at every power-on; Digitakt only for now) lets `tools/digiusb.py keys` press
+- **REMOTE KEYS** (on at every power-on) lets `tools/digiusb.py keys` press
   the panel's buttons over USB: see [Remote keys](#remote-keys). Off, the
   unit refuses key commands and lets go of any key the computer holds;
   the diagnostics still answer.
