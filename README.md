@@ -22,7 +22,7 @@ SYSTEM INFO alone (digihealth 1.1): see [The Digitone](#the-digitone).
 
 Experimental **Digitone II OS 1.12** support has run on a physical unit
 on the DN2 branch: [build, remote controls, screen readback and validation](dn2/README.md).
-It requires core-dn2 0.3 and has no FAST AUDIO or DSP-load measurement.
+It requires core-dn2 0.1 and has no FAST AUDIO or DSP-load measurement.
 
 It is an [elekloader](https://github.com/irpina/elekloader) mod.
 elekloader builds a custom OS file on your own machine, from your stock OS

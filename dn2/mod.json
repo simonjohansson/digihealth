@@ -73,7 +73,7 @@
   "core"
  ],
  "resources": {
-  "core": "0.3",
+  "core": "0.1",
   "names": [
    "settings:SYSTEM INFO",
    "settings:REMOTE KEYS",

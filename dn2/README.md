@@ -1,6 +1,6 @@
 # Digitone II OS 1.12
 
-Experimental DigiHealth 1.3 with core-dn2 0.3. No FAST AUDIO, SRAM or SHARC
+Experimental DigiHealth 1.3 with core-dn2 0.1. No FAST AUDIO, SRAM or SHARC
 changes. CPU/DSP load and free sample memory are unavailable: SYSTEM INFO
 shows unavailable load fields and free buddy-heap RAM; STATS does not set
 the load-valid flag. No substitute DSP figure is fabricated.
@@ -13,16 +13,17 @@ unchanged. DN2 advertises input revision 3, product 3, OS 1.12.
 
 ## Build
 
-Use an Elekloader checkout containing `codex/dn2-remote-support` (based on
-`digitone-2-support`), m68k binutils/GCC and your own pinned stock OS 1.12.
+Use an Elekloader checkout of `digitone-2-support`, m68k binutils/GCC and
+your own pinned stock OS 1.12.
 Its SHA-256 is
 `7e5b8a733d4ab1fdf7e5d22757f7d8eddaa3cbf71d0858874a791844c02ceb35`.
-No firmware or generated `.elemod`/map belongs in Git.
+No firmware or generated `.elemod`/map belongs in Git. Core 0.1 is the
+consolidated, unreleased version; the earlier development label was 0.3.
 
 ```sh
 ELEKLOADER_CROSS=m68k-elf- PYTHONPATH=/path/to/elekloader python build.py --stock /path/to/Digitone_II_OS1.12.syx
 python -m elekloader.sdk.build /path/to/elekloader/mods/core-dn2 --stock /path/to/Digitone_II_OS1.12.syx
-python -m elekloader.lint out/digihealth-1.3.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.3.elemod --json
+python -m elekloader.lint out/digihealth-1.3.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
 ```
 
 Use the selected mise Python runtime for those commands. Link core,
