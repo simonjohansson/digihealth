@@ -1,6 +1,6 @@
 # Digitone II OS 1.12
 
-Experimental DigiHealth 1.4 with core-dn2 0.1. No FAST AUDIO, SRAM timer or
+Experimental DigiHealth 1.5 with core-dn2 0.1. No FAST AUDIO, SRAM timer or
 SHARC code changes. `tools/digiusb.py stats` now also reports relative CPU
 activity, raw SHARC handler spans and the largest free ColdFire heap block.
 [Measurement definitions, protocol and limits](METRICS.md) describe the exact
@@ -29,7 +29,7 @@ No firmware or generated `.elemod`/map belongs in Git.
 ```sh
 ELEKLOADER_CROSS=m68k-elf- PYTHONPATH=/path/to/elekloader python build.py --stock /path/to/Digitone_II_OS1.12.syx
 python -m elekloader.sdk.build /path/to/elekloader/mods/core-dn2 --stock /path/to/Digitone_II_OS1.12.syx
-python -m elekloader.lint out/digihealth-1.4.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
+python -m elekloader.lint out/digihealth-1.5.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
 ```
 
 Use the selected mise Python runtime for those commands. Link core,
@@ -124,3 +124,8 @@ actions. STATS publishes once a second, so poll for the new flag after a
 toggle rather than treating the previous snapshot as a failed toggle.
 Candidate identities and remaining qualification work are recorded in the
 [DN2 PR preparation issue](https://github.com/simonjohansson/elekloader/issues/27).
+
+Optional measured L2 apps use the sibling `core-dn2-metrics` and the new
+[raw callback counters](DSP-METRICS.md). Ordinary L1/unmeasured L2 builds
+keep their existing core. Physical 1.4 CPU/raw-handler evidence is separate
+from the new 1.5 callback producer's pending physical qualification.

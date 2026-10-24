@@ -41,7 +41,8 @@ The old STATS heap snapshot has its own generation, so its publication need
 not coincide with a METRICS window.
 
 Total DSP idle/busy load, calibrated callback cost, hardware cycle margin,
-live SHARC heap and physical peak stack remain **unavailable**. Build-time
+live SHARC heap and physical peak stack remain **unavailable**. The optional
+1.5 [raw callback transport](DSP-METRICS.md) is a separate qualification slice. Build-time
 code/data capacities and declared stack limits are separate static facts.
 They are not reported as runtime free DSP memory.
 
@@ -125,7 +126,8 @@ L2 sine without overlap. The combined decoded update is 1,933,848 bytes,
 leaving 163,304 bytes below the measured 2 MiB cap. The helper itself has
 6,176 code and 3,760 BSS bytes with the tested m68k-elf GCC 16.2.0 build.
 
-The compiled block producer is a leaf with a 16-byte C frame/save. Together
+In the physically checked 1.4 build, the block producer is a leaf with a
+16-byte C frame/save. Together
 with the 20-byte trampoline and four-byte call return, its transient depth
 is 40 bytes, inside the original handler's 240-byte prologue envelope. This
 bounds this hook's added stack demand, not every interrupt nesting or whole
@@ -200,7 +202,7 @@ next small slice. An isolated offline prototype, compiled with Selache
 snapshot serializer and exact-stock tail adapter in **628 code bytes and
 76 state bytes**. The proposed L2-only layout allows 704 linked code bytes
 plus a 64-byte guard and 152 state bytes inside the existing L1 ownership;
-it preserves the 52-byte pitch table and grants no additional RAM. A direct
+it preserves the 48-byte pitch table and grants no additional RAM. A direct
 C prototype did not fit and was refused; the budget was not enlarged. This
 is a feasibility result, not an accepted Elekloader ABI or installed feature.
 

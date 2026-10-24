@@ -54,7 +54,7 @@ class Firmware(unittest.TestCase):
         steps=['tap:8']+['tap:14']*16+['tap:11','tap:11','tap:10','wait:200M',
             'send:'+usb.req_stats(1).hex(),'tap:14','tap:10',
             'send:'+usb.req_caps(2).hex(),'send:'+usb.req_metrics(3).hex(),
-            'send:'+usb.req_frame(4).hex(),
+            'send:'+usb.req_frame(4).hex(),'send:'+usb.req_dsp_metrics(5).hex(),
             f"peek:{manifest['_map']['rk_off']:#x}:4",'peek:0x445a2e30:7']
         result=subprocess.run([str(panel),os.environ['DN2_TEST_SYX'],
             '--base','7e5b8a733d4ab1fdf7e5d22757f7d8eddaa3cbf71d0858874a791844c02ceb35',
@@ -63,14 +63,16 @@ class Firmware(unittest.TestCase):
             text=True,capture_output=True,check=True)
         report=json.loads(result.stdout)
         replies=[usb.parse(bytes.fromhex(row['hex'])) for row in report['captures']]
-        self.assertEqual([r['seq'] for r in replies],[1,2,3,4])
+        self.assertEqual([r['seq'] for r in replies],[1,2,3,4,5])
         self.assertTrue(usb.decode_stats(replies[0]['payload'])['overlay'])
         self.assertEqual((replies[1]['status'],replies[1]['payload']),(6,b''))
         self.assertEqual(usb.decode_metrics(replies[2]['payload'])['version'],1)
         self.assertEqual((replies[3]['status'],len(replies[3]['payload'])),(0,1028))
+        self.assertFalse(usb.decode_dsp_metrics(replies[4]['payload'])['available'])
         self.assertEqual(report['results'][-2]['hex'],'01000000')
         self.assertEqual(report['results'][-1]['hex'],'00000000000000')
         if os.environ.get('DN2_TEST_OUT'):
+            Path(os.environ['DN2_TEST_OUT']).mkdir(parents=True,exist_ok=True)
             (Path(os.environ['DN2_TEST_OUT'])/'settings-off.json').write_text(json.dumps(report,indent=2)+'\n')
 
     def test_usb_and_core_events(self):
@@ -102,8 +104,9 @@ class Firmware(unittest.TestCase):
                 port=Port();diag=usb.Diag(port)
                 try:
                     hello=usb.decode_hello(diag.call(usb.req_hello))
-                    self.assertEqual((hello['proto'],hello['name']),(1,'digihealth 1.4'))
+                    self.assertEqual((hello['proto'],hello['name']),(1,'digihealth 1.5'))
                     self.assertEqual(usb.decode_metrics(diag.call(usb.req_metrics))['version'],1)
+                    self.assertFalse(usb.decode_dsp_metrics(diag.call(usb.req_dsp_metrics))['available'])
                     self.assertEqual(usb.peek(diag,0x40000400,4),bytes.fromhex('400004e8'))
                     generation,pbm=usb.screen(diag)
                     self.assertGreater(generation,0);self.assertTrue(pbm.startswith(b'P1\n128 64\n'))

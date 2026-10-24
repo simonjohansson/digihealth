@@ -1,11 +1,11 @@
 {
  "id": "digihealth",
- "version": "1.4",
+ "version": "1.5",
  "title": "digihealth",
  "category": "Diagnostics",
  "author": "irpina",
  "license": "GPL-2.0-or-later",
- "description": "Digitone II OS 1.12: heap diagnostics, relative CPU idle-reference windows and raw SHARC handler spans, plus SYSTEM INFO, remote buttons/encoders and screen readback. Total DSP load and peak stack remain unavailable.",
+ "description": "Digitone II OS 1.12: heap, relative CPU, raw handler spans and optional measured-L2 callback counters over USB, plus remote controls and screen readback. Total DSP load and peak stack remain unavailable.",
  "device": "digitone-mk2",
  "os": "1.12",
  "sources": [
@@ -14,7 +14,8 @@
   "../remote_keys.s",
   "io.c",
   "metrics-core.c",
-  "metrics-core.s"
+  "metrics-core.s",
+  "dsp-metrics.c"
  ],
  "defsym": {
   "DN2": 1,

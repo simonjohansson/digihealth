@@ -2,6 +2,7 @@
 #include <digitone-mk2/core.h>
 #include "../remote_keys.h"
 #include "metrics-core.h"
+#include "dsp-metrics.h"
 
 extern void diag_rx(const unsigned char *body, unsigned length);
 static const unsigned char header[6] = {0xf0,0,0x20,0x3c,0x7d,0};
@@ -46,6 +47,8 @@ int dn2_receive(const unsigned char *packed, unsigned length, unsigned char *rep
 {
     unsigned i, sr;
     int metrics = dhm_receive(packed, length, reply);
+    if (metrics) return metrics;
+    metrics = dhs_receive(packed, length, reply);
     if (metrics) return metrics;
     if (length < 4 || (packed[3] | ((packed[0] << 3) & 0x80)) != 0x15)
         return rk_receive(packed, length, reply);

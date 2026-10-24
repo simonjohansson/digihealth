@@ -51,6 +51,7 @@ PEEK_MAX = 1024
 PEEK_RANGES = ((0x40000000, 0x48000000), (0x80000000, 0x80010000))
 ORDERS = 24
 METRICS = 4                 # DN2-only relative CPU/raw handler window
+DSP_METRICS = 5             # optional measured-L2 callback transport
 RENDERS_PER_S = 1500          # the audio render: 48 kHz in blocks of 32
 
 
@@ -95,6 +96,10 @@ def req_hello(seq):
 
 def req_metrics(seq):
     return request(seq, METRICS)
+
+
+def req_dsp_metrics(seq):
+    return request(seq, DSP_METRICS)
 
 
 def req_stats(seq):
@@ -212,6 +217,65 @@ def decode_metrics(p):
     return d
 
 
+
+# Optional DN2 callback totals: raw timestamps/counters, not DSP utilization.
+DSP_METRICS_FIELDS = ('magic', 'version', 'bytes', 'flags', 'published_blocks',
+                      'now_blocks', 'sequence', 'callback_count', 'sum_hi', 'sum_lo',
+                      'maximum', 'clock', 'producer_flags', 'accepted', 'crc_errors',
+                      'dropped', 'reserved')
+DSP_METRICS_FMT = '>IHH14I'
+
+
+def decode_dsp_metrics(p):
+    if len(p) != struct.calcsize(DSP_METRICS_FMT):
+        raise ValueError('invalid DSP metrics reply length')
+    d = dict(zip(DSP_METRICS_FIELDS, struct.unpack(DSP_METRICS_FMT, p)))
+    if (d['magic'] != 0x44484331 or d['version'] != 1 or d['bytes'] != len(p)
+            or d['flags'] & ~3 or d['reserved'] or d['sequence'] > 7):
+        raise ValueError('unsupported DSP metrics layout')
+    fresh, seen = bool(d['flags'] & 1), bool(d['flags'] & 2)
+    d['age_blocks'] = (d['now_blocks'] - d['published_blocks']) & 0xffffffff
+    if (fresh != (seen and d['age_blocks'] <= 64)
+            or seen and d['producer_flags'] != 1
+            or not seen and any(d[n] for n in ('published_blocks', 'sequence', 'callback_count',
+                                              'sum_hi', 'sum_lo', 'maximum', 'clock',
+                                              'producer_flags', 'accepted'))):
+        raise ValueError('inconsistent DSP metrics snapshot')
+    d['available'] = fresh
+    d['sum_ticks'] = (d['sum_hi'] << 32) | d['sum_lo']
+    return d
+
+
+def callback_window(previous, current):
+    """Use bounded unsigned deltas; detected resets/gaps need a new baseline."""
+    if not previous or not previous['available'] or not current['available']:
+        return None
+    blocks = (current['published_blocks'] - previous['published_blocks']) & 0xffffffff
+    count = (current['callback_count'] - previous['callback_count']) & 0xffffffff
+    ticks = (current['sum_ticks'] - previous['sum_ticks']) & 0xffffffffffffffff
+    if (not blocks or blocks >= 0x80000000 or not count or count > blocks + 2
+            or ticks > count * current['maximum'] or current['maximum'] < previous['maximum']):
+        return None
+    return {'count': count, 'ticks': ticks, 'average': ticks / count}
+
+
+def show_dsp_metrics(current, previous=None):
+    if current is None or not current['available']:
+        print('  SHARC callback timing: unavailable (no fresh measured-L2 snapshot)')
+        return
+    window = callback_window(previous, current)
+    if window:
+        print('  SHARC render callback: average %.1f raw EMUCLK ticks (%d calls since previous snapshot)'
+              % (window['average'], window['count']))
+    else:
+        print('  SHARC render callback: waiting for a second coherent counter baseline')
+    print('  callback maximum since producer boot: %d raw ticks; transport age %d CF blocks'
+          % (current['maximum'], current['age_blocks']))
+    if current['crc_errors'] or current['dropped']:
+        print('  callback transport: %d CRC errors, %d dropped snapshots'
+              % (current['crc_errors'], current['dropped']))
+
+
 def decode_peek(p):
     addr, = struct.unpack_from('>I', p)
     return {'addr': addr, 'data': p[4:]}
@@ -230,7 +294,7 @@ class Diag:
 
     def call(self, builder, *args, timeout=2.0, tries=2):
         """Only known reads may be retried; actions need explicit status recovery."""
-        if builder not in (req_hello, req_stats, req_metrics, req_peek, req_caps, req_key_status, req_frame):
+        if builder not in (req_hello, req_stats, req_metrics, req_dsp_metrics, req_peek, req_caps, req_key_status, req_frame):
             tries = 1
         if tries < 1:
             raise ValueError('tries must be positive')
@@ -252,7 +316,7 @@ class Diag:
         def answered(msgs):
             for m in msgs[len(found):]:
                 r = parse(m)
-                if (CAPS <= cmd <= FRAME or cmd == METRICS) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
+                if (CAPS <= cmd <= FRAME or cmd in (METRICS, DSP_METRICS)) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
                     r = None
                 found.append(r if r and r['seq'] == seq and r['cmd'] == cmd | 0x80 else None)
             return any(found)
@@ -416,12 +480,13 @@ def cmd_cfw(d, _args):
     print('%s  (channel v%d, up %d s)' % (h['name'], h['proto'], h['uptime']))
 
 
-def show_stats(s, metrics=None):
+def show_stats(s, metrics=None, dsp_metrics=None, previous_dsp=None):
     print('second %d%s%s' % (s['seconds'], '' if s['overlay'] else '  (SYSTEM INFO off)',
                              '  FAST AUDIO on' if s['fast'] else '')
           + ('  (FAST AUDIO refused or undone)' if s['fast_fault'] else ''))
     if metrics is not None:
         show_metrics(metrics)
+        show_dsp_metrics(dsp_metrics, previous_dsp)
     elif 'dsp' in s:
         print('  CPU %5.1f %%   DSP %5.1f %%   DSP peak %5.1f %%'
               % (100 * s['cpu'], 100 * s['dsp'], 100 * s['dsp_peak']))
@@ -452,7 +517,7 @@ def show_metrics(d):
               % (d['handler_average'], d['handler_max'], d['handler_samples'], d['handler_zero']))
     else:
         print('  SHARC handler span: unavailable')
-    print('  total DSP load, callback cost and peak stack: unavailable')
+    print('  total DSP load and peak stack: unavailable')
 
 
 def cmd_stats(d, args):
@@ -461,6 +526,12 @@ def cmd_stats(d, args):
         metrics = decode_metrics(d.call(req_metrics))
     except _RequestRefused:
         metrics = None
+    dsp_metrics = None
+    if metrics is not None:
+        try:
+            dsp_metrics = decode_dsp_metrics(d.call(req_dsp_metrics))
+        except _RequestRefused:
+            pass
     for _ in range(int(args[0]) if args else 1):
         while True:
             s = decode_stats(d.call(req_stats))
@@ -470,7 +541,10 @@ def cmd_stats(d, args):
         last = s['seconds']
         if metrics is not None:
             metrics = decode_metrics(d.call(req_metrics))
-        show_stats(s, metrics)
+        previous_dsp = dsp_metrics
+        if dsp_metrics is not None:
+            dsp_metrics = decode_dsp_metrics(d.call(req_dsp_metrics))
+        show_stats(s, metrics, dsp_metrics, previous_dsp)
 
 
 def _range(args):

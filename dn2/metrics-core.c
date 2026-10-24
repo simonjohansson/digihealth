@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "metrics-core.h"
+#include "dsp-metrics.h"
 
 extern volatile const unsigned dhm_reply[];
 extern unsigned core_keys_lock(void);
@@ -17,6 +18,7 @@ void dhm_block(void)
 {
     unsigned value = dhm_reply[0], old, idle, delta, flags;
     ++blocks;
+    dhs_block(dhm_reply[2], blocks);
     if (value) {
         old = sum_lo;
         sum_lo += value;

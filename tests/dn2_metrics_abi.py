@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Run bounded compiled-hook probes; all writes affect only emulator memory."""
 
-import json, struct, subprocess, sys
+import json, os, struct, subprocess, sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
+objects = Path(os.environ.get("DN2_TEST_OBJECTS", root / "out/digihealth.work"))
 firmware, manifest_path, panel, output, cross = sys.argv[1:]
 out = Path(output)
 out.mkdir(parents=True, exist_ok=True)
@@ -12,7 +13,7 @@ manifest = json.loads(Path(manifest_path).read_text())["_map"]
 symbols = {
     p[2]: int(p[0], 16)
     for line in subprocess.check_output(
-        [cross + "nm", "-n", str(root / "out/digihealth.work/sysinfo.s.o")], text=True
+        [cross + "nm", "-n", str(objects / "sysinfo.s.o")], text=True
     ).splitlines()
     if len(p := line.split()) == 3
 }
@@ -68,7 +69,7 @@ for cmd in [
 probe = (out / "probe.bin").read_bytes()
 loc = {}
 for line in subprocess.check_output(
-    [cross + "nm", "-n", str(root / "out/digihealth.work/metrics-core.c.o")], text=True
+    [cross + "nm", "-n", str(objects / "metrics-core.c.o")], text=True
 ).splitlines():
     parts = line.split()
     if len(parts) == 3:

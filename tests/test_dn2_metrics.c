@@ -1,3 +1,5 @@
+/* The isolated CPU/handler test supplies no optional SHARC channel. */
+void dhs_block(unsigned word, unsigned blocks) { (void)word; (void)blocks; }
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include <assert.h>
 #include <stdint.h>
@@ -5,7 +7,7 @@
 #ifndef REPLY
 #define REPLY 0xfffffff0u
 #endif
-volatile const unsigned dhm_reply[] = { REPLY };
+volatile const unsigned dhm_reply[] = { REPLY, 0, 0 };
 static unsigned locked;
 unsigned core_keys_lock(void) { assert(!locked); locked = 1; return 0x2300; }
 void core_keys_unlock(unsigned sr) { assert(locked && sr == 0x2300); locked = 0; }

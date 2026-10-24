@@ -183,7 +183,7 @@ class Metrics(unittest.TestCase):
         text = out.getvalue()
         self.assertIn("relative to rolling best idle window", text)
         self.assertIn("raw EMUCLK ticks", text)
-        self.assertIn("total DSP load, callback cost and peak stack: unavailable", text)
+        self.assertIn("total DSP load and peak stack: unavailable", text)
         self.assertIn("sample pool free: unavailable on DN2", text)
         self.assertNotIn("audio stopped", text)
         self.assertEqual(s["heap_largest"], 16 << 20)
