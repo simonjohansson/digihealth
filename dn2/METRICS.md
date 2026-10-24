@@ -192,7 +192,7 @@ comparison. [Issue #11](https://github.com/simonjohansson/digihealth/issues/11)
 tracks the next owned SHARC producer/transport slice.
 
 
-## Callback timing feasibility, pending integration approval
+## Callback timing feasibility before integration
 
 [Issue #11](https://github.com/simonjohansson/digihealth/issues/11) owns the
 next small slice. An isolated offline prototype, compiled with Selache
@@ -236,3 +236,8 @@ duplicate, restart, torn-read and CRC refusal tests, normal build integration,
 physical timebase/overhead calibration and audio regression remain required.
 No SHARC telemetry code is installed by DigiHealth 1.4. Total DSP idle/busy
 and bounded physical stack high-water are subsequent, separate measurements.
+
+The separate [paired DigiKit C/ASM load comparison](EMULATOR-LOAD.md) uses
+existing emulator tools. Its modeled load and host CPU costs are not physical
+DSP timing. The user has now approved bounded L2 callback integration; actual
+channel qualification and mirrored validation remain its installation gates.
