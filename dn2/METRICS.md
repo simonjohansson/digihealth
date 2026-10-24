@@ -114,7 +114,8 @@ and reply scratch are not imported here.
 increment and remaining calibration. An owned coherent DSP-to-ColdFire
 transport plus exact SHARC callback/idle hooks is the next measurement step;
 it must coexist with the current exclusive C/ASM app and preserve stock
-reply/effect audio. Physical qualification of the new hooks is pending.
+reply/effect audio. The first 1.4 ColdFire hooks have the bounded physical
+qualification below; they do not qualify a new SHARC producer.
 
 
 ## First implementation checks
@@ -189,3 +190,49 @@ cycle/cache overhead, whole-OS interrupt margin, total DSP load, callback
 cost, peak stack, broader stock-project stress or a calibrated C/ASM speed
 comparison. [Issue #11](https://github.com/simonjohansson/digihealth/issues/11)
 tracks the next owned SHARC producer/transport slice.
+
+
+## Callback timing feasibility, pending integration approval
+
+[Issue #11](https://github.com/simonjohansson/digihealth/issues/11) owns the
+next small slice. An isolated offline prototype, compiled with Selache
+`2b26d3b75c53063575bc5c820fa0d38879335187`, fits its render wrapper, frozen
+snapshot serializer and exact-stock tail adapter in **628 code bytes and
+76 state bytes**. The proposed L2-only layout allows 704 linked code bytes
+plus a 64-byte guard and 152 state bytes inside the existing L1 ownership;
+it preserves the 52-byte pitch table and grants no additional RAM. A direct
+C prototype did not fit and was refused; the budget was not enlarged. This
+is a feasibility result, not an accepted Elekloader ABI or installed feature.
+
+The wrapper adds an eight-byte call frame. Keep the current gross borrowed
+stack ceiling at 544 bytes: 116 bridge + 8 measurement + at most **420 app**.
+An otherwise valid app declaring 428 bytes must be refused when measured.
+Existing unmeasured/L1 contracts keep their present limit. A later integration
+needs matching Python/TypeScript checks and both boundary tests; the private
+prototype has only checked that arithmetic and actual fixture depth.
+
+Actual unchanged external C and ASM L2 renders were compared with direct
+calls for eight blocks each. Output and app state match exactly, output
+guards remain intact, and the write watch detects no code writes. Synthetic
+caller-inclusive maximum depths change from 108 to 116 bytes for C and 52
+to 60 bytes for ASM. Those depths establish the wrapper overhead in these
+fixtures; they are not physical peak-stack observations.
+
+The exact OS 1.12 tail at PC16 `0x1c9e5f` has live reply pointer I4 and
+SISD MODE1 `0x39011cf8` in captured idle and genuinely sounding contexts.
+Both contexts, plus hostile unrelated modifiers/circular settings, preserve
+I4, live registers, flags, active/inactive banks and the circular stock
+stack over 17 serialized words; the adapter performs no stack writes. The
+stock continuation restores I2/I5/R10/R11/R13/R14/R15 before using them,
+which permits this adapter's narrow scratch set. The runner is binary32;
+this is not arbitrary-mode or full 40-bit arithmetic execution proof.
+
+The proposed reply header word 2 remains **unqualified for ownership**.
+Exact stock direct base literals and the parameter reader were checked:
+its valid field/sample offsets begin after the header. That does not exclude
+indirect consumers, aliases, other projects or FX paths. A tagged 17-word
+sequence with a frozen snapshot and CRC16 works offline; receiver loss,
+duplicate, restart, torn-read and CRC refusal tests, normal build integration,
+physical timebase/overhead calibration and audio regression remain required.
+No SHARC telemetry code is installed by DigiHealth 1.4. Total DSP idle/busy
+and bounded physical stack high-water are subsequent, separate measurements.
