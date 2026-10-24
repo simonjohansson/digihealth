@@ -144,5 +144,48 @@ passes. The initial compiled-test run had a missing report directory; after
 creating it, all nine targeted tests ran cleanly on the exact candidate.
 
 Private reports, firmware candidates, disassembly and emulator probes stay
-under `out/`. None is committed. Physical calibration/acceptance of 1.4 is
-pending; the earlier port's 1.3 physical results do not qualify these hooks.
+under `out/`. None is committed. The initial implementation checks preceded the separate physical results below;
+the earlier port's 1.3 physical results alone did not qualify these hooks.
+
+
+## Bounded physical producer/readback check
+
+On 24 October 2026 the parent task installed the exact C-L2 candidate above,
+then independently verified device version `HC14`, helper `digihealth 1.4`,
+remote buttons and a fresh FRAME. All 7,512 immutable ColdFire runtime bytes
+matched the linked candidate, SHA-256
+`05f65ad9a5b0471654a0703919cb8c4c7cb6e665c57b42866fdf4be89b0e5a22`.
+No device operation was performed by the implementation subagent.
+
+Forty coherent METRICS/STATS snapshots and separate live ColdFire block
+counter reads covered 10.3728846 host seconds. Windows 58 through 68 were
+observed, each with 1,500 nonzero raw handler samples and no zero samples.
+The observed live-counter slope was 1,500.01 block interrupts per host second.
+This supports the intended window cadence; it is not a SHARC clock/cycle
+calibration. Relative CPU ranged from 26.646% to 31.143% against the rolling
+best observed idle reference. Raw handler averages ranged from 423,934.138
+to 424,396.917 ticks. None of these is absolute CPU or total DSP utilization.
+
+Heap walks had zero faults, with 30,706,624 free bytes and a largest free
+block of 16 MiB in that workload. Three readings through the ordinary
+`digiusb.py stats` client displayed those fields and unavailable metrics as
+specified. This is one allocator, not general free RAM or DSP memory.
+
+A separate six-note C-L2 audio regression then passed: 18.005333 seconds,
+864,256 stereo frames, 1,688 host capture buffers and zero dropped buffers.
+MIDI notes 48/60/69/72/81/84 followed the external example's deliberate
+one-octave phase change. Channels were identical, peak was 0.17857146, the
+final second was silent, and maximum pitch error was 0.081284 cent at nominal
+48 kHz. The capture clock was not independently calibrated. Capture SHA-256:
+`ceda000fcbf2181c7ab75d67db34fa212470cdaf5a3cf9ff9e926b7fe3fc5845`;
+PCM SHA-256:
+`583981781e170dc6a9c57417a15f594810a5f8085fa02e024a6dd90f20f7e810`.
+
+Private physical evidence:
+`/Users/simonjohansson/src/elekloader-sharc/out/digihealth14-20261024/`,
+including `physical-metrics-report.json`, `HC14-physical-report.json`, client
+output, readback and capture logs. These results do not measure added IRQ
+cycle/cache overhead, whole-OS interrupt margin, total DSP load, callback
+cost, peak stack, broader stock-project stress or a calibrated C/ASM speed
+comparison. [Issue #11](https://github.com/simonjohansson/digihealth/issues/11)
+tracks the next owned SHARC producer/transport slice.

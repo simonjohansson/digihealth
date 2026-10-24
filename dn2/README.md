@@ -15,7 +15,8 @@ The two SETTINGS rows, SYSTEM INFO and REMOTE KEYS, retain their behavior.
 REMOTE KEYS is on at boot; turning it off refuses input and releases owned
 keys while METRICS and the existing diagnostics still answer. DN2 advertises
 input revision 3, product 3, OS 1.12; the mk1 firmware and input protocol are
-unchanged. Physical qualification of the new measurement hooks is pending.
+unchanged. The new hooks passed a bounded physical producer/readback and
+six-note audio check; see the measurement evidence and remaining limits.
 
 ## Build
 
