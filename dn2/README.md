@@ -1,19 +1,25 @@
 # Digitone II OS 1.12
 
-Experimental DigiHealth 1.3 with core-dn2 0.1. No FAST AUDIO, SRAM or SHARC
-changes. CPU/DSP load and free sample memory are unavailable: SYSTEM INFO
-shows unavailable load fields and free buddy-heap RAM; STATS does not set
-the load-valid flag. No substitute DSP figure is fabricated.
+Experimental DigiHealth 1.4 with core-dn2 0.1. No FAST AUDIO, SRAM timer or
+SHARC code changes. `tools/digiusb.py stats` now also reports relative CPU
+activity, raw SHARC handler spans and the largest free ColdFire heap block.
+[Measurement definitions, protocol and limits](METRICS.md) describe the exact
+scope. Total DSP utilization, callback timing and peak stack are unavailable.
+SYSTEM INFO and the legacy STATS timing-valid flag remain unavailable; the
+relative CPU/raw handler figures use a separate read-only METRICS command.
 
-The mod subscribes to core events and owns no stock code sites. Its two
-SETTINGS rows, SYSTEM INFO and REMOTE KEYS, boot in the ColdFire emulator.
+Two isolated ColdFire hooks count idle-loop iterations and block interrupts;
+the remaining functionality subscribes to core events. The generic producer
+is kept in `metrics-core.c` / `metrics-core.s` for later core contribution.
+The two SETTINGS rows, SYSTEM INFO and REMOTE KEYS, retain their behavior.
 REMOTE KEYS is on at boot; turning it off refuses input and releases owned
-keys. The existing mk1 maps, protocol revision 2 and compiled firmware stay
-unchanged. DN2 advertises input revision 3, product 3, OS 1.12.
+keys while METRICS and the existing diagnostics still answer. DN2 advertises
+input revision 3, product 3, OS 1.12; the mk1 firmware and input protocol are
+unchanged. Physical qualification of the new measurement hooks is pending.
 
 ## Build
 
-Use an Elekloader checkout of `digitone-2-support`, m68k binutils/GCC and
+Use an Elekloader checkout of `sharc`, m68k binutils/GCC and
 your own pinned stock OS 1.12.
 Its SHA-256 is
 `7e5b8a733d4ab1fdf7e5d22757f7d8eddaa3cbf71d0858874a791844c02ceb35`.
@@ -22,7 +28,7 @@ No firmware or generated `.elemod`/map belongs in Git.
 ```sh
 ELEKLOADER_CROSS=m68k-elf- PYTHONPATH=/path/to/elekloader python build.py --stock /path/to/Digitone_II_OS1.12.syx
 python -m elekloader.sdk.build /path/to/elekloader/mods/core-dn2 --stock /path/to/Digitone_II_OS1.12.syx
-python -m elekloader.lint out/digihealth-1.3.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
+python -m elekloader.lint out/digihealth-1.4.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
 ```
 
 Use the selected mise Python runtime for those commands. Link core,

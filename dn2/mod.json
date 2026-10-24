@@ -1,22 +1,27 @@
 {
  "id": "digihealth",
- "version": "1.3",
+ "version": "1.4",
  "title": "digihealth",
  "category": "Diagnostics",
  "author": "irpina",
  "license": "GPL-2.0-or-later",
- "description": "Digitone II OS 1.12: heap diagnostics and SYSTEM INFO, bounded remote buttons and encoder turns, and consistent screen readback. CPU/DSP load and FAST AUDIO are not available on this port.",
+ "description": "Digitone II OS 1.12: heap diagnostics, relative CPU idle-reference windows and raw SHARC handler spans, plus SYSTEM INFO, remote buttons/encoders and screen readback. Total DSP load and peak stack remain unavailable.",
  "device": "digitone-mk2",
  "os": "1.12",
  "sources": [
   "../sysinfo.s",
   "../remote_keys.c",
   "../remote_keys.s",
-  "io.c"
+  "io.c",
+  "metrics-core.c",
+  "metrics-core.s"
  ],
  "defsym": {
   "DN2": 1,
-  "RK_KEYS": 1
+  "RK_KEYS": 1,
+  "DHM_CREATE_MAIN": "0x4002e8d0",
+  "DHM_BLOCK_CONTINUE": "0x40025e3e",
+  "DHM_REPLY": "0x800053a4"
  },
  "cflags": [
   "-DRK_PRODUCT=3",
@@ -79,5 +84,19 @@
    "settings:REMOTE KEYS",
    "sysex:0x7d"
   ]
- }
+ },
+ "sites": [
+  {
+   "addr": "0x400cf24e",
+   "stock": "4eb94002e8d0",
+   "op": "jmp",
+   "target": "dhm_idle_hook"
+  },
+  {
+   "addr": "0x40025e36",
+   "stock": "4e56ff1448d73fff",
+   "op": "jmp",
+   "target": "dhm_block_hook"
+  }
+ ]
 }

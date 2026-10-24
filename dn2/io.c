@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include <digitone-mk2/core.h>
 #include "../remote_keys.h"
+#include "metrics-core.h"
 
 extern void diag_rx(const unsigned char *body, unsigned length);
 static const unsigned char header[6] = {0xf0,0,0x20,0x3c,0x7d,0};
@@ -44,6 +45,8 @@ void dn2_frame(const unsigned *bmp, void *ctrl)
 int dn2_receive(const unsigned char *packed, unsigned length, unsigned char *reply)
 {
     unsigned i, sr;
+    int metrics = dhm_receive(packed, length, reply);
+    if (metrics) return metrics;
     if (length < 4 || (packed[3] | ((packed[0] << 3) & 0x80)) != 0x15)
         return rk_receive(packed, length, reply);
     reply[0] = packed[1] | ((packed[0] << 1) & 0x80);

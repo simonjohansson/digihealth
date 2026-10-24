@@ -50,6 +50,7 @@ PEEK_MAX = 1024
 # space (a read there can clear a status bit).
 PEEK_RANGES = ((0x40000000, 0x48000000), (0x80000000, 0x80010000))
 ORDERS = 24
+METRICS = 4                 # DN2-only relative CPU/raw handler window
 RENDERS_PER_S = 1500          # the audio render: 48 kHz in blocks of 32
 
 
@@ -90,6 +91,10 @@ def request(seq, cmd, payload=b''):
 
 def req_hello(seq):
     return request(seq, HELLO)
+
+
+def req_metrics(seq):
+    return request(seq, METRICS)
 
 
 def req_stats(seq):
@@ -158,17 +163,52 @@ def decode_stats(p):
     d = dict(zip(STATS_FIELDS, struct.unpack_from(STATS_FMT, p)))
     off = struct.calcsize(STATS_FMT)
     d['free_blocks'] = list(struct.unpack_from('>%dH' % ORDERS, p, off))
+    d['heap_largest'] = max((16 << order for order, count in enumerate(d['free_blocks'])
+                             if count), default=0)
     d['valid'] = bool(d['flags'] & 1)
     d['overlay'] = bool(d['flags'] & 2)
     d['fast'] = bool(d['flags'] & 4)            # FAST AUDIO: SRAM copies run
     d['fast_fault'] = bool(d['flags'] & 8)      # refused, or undone
     w, n = d['window'], d['renders']
-    if w and n:
+    if d['valid'] and w and n:
         period = w / n                               # counter ticks per render
         d['counter_hz'] = period * RENDERS_PER_S
         d['dsp'] = d['render_ticks'] / w
         d['dsp_peak'] = d['render_max'] / period
         d['cpu'] = 1 - max(0, d['idle_ticks'] - d['idle_render']) / w
+    return d
+
+
+# DN2 METRICS v1: a closed 1500-block window, all integers big-endian.
+METRICS_FIELDS = ('magic', 'version', 'bytes', 'flags', 'blocks', 'windows',
+                  'window_blocks', 'idle_total', 'idle_window', 'idle_reference',
+                  'handler_sum_hi', 'handler_sum_lo', 'handler_max',
+                  'handler_samples', 'handler_zero')
+METRICS_FMT = '>IHH12I'
+
+
+def decode_metrics(p):
+    if len(p) != struct.calcsize(METRICS_FMT):
+        raise ValueError('invalid metrics reply length')
+    d = dict(zip(METRICS_FIELDS, struct.unpack(METRICS_FMT, p)))
+    if (d['magic'] != 0x44484d31 or d['version'] != 1 or d['bytes'] != len(p)
+            or d['flags'] & ~7 or d['window_blocks'] != 1500):
+        raise ValueError('unsupported metrics layout')
+    closed, cpu, handler = (bool(d['flags'] & bit) for bit in (1, 2, 4))
+    n, zero = d['handler_samples'], d['handler_zero']
+    total = (d['handler_sum_hi'] << 32) | d['handler_sum_lo']
+    if (cpu and (not closed or d['windows'] < 3 or not d['idle_reference']
+                 or d['idle_window'] > d['idle_reference'])
+            or handler != bool(n) or handler and not closed
+            or closed and n + zero != d['window_blocks']
+            or not closed and (d['flags'] or d['windows'] or n or zero)
+            or n and not (d['handler_max'] <= total <= n * d['handler_max'])
+            or not n and (total or d['handler_max'])):
+        raise ValueError('inconsistent metrics window')
+    if cpu:
+        d['cpu_relative'] = 1 - d['idle_window'] / d['idle_reference']
+    if handler:
+        d['handler_average'] = total / n
     return d
 
 
@@ -190,7 +230,7 @@ class Diag:
 
     def call(self, builder, *args, timeout=2.0, tries=2):
         """Only known reads may be retried; actions need explicit status recovery."""
-        if builder not in (req_hello, req_stats, req_peek, req_caps, req_key_status, req_frame):
+        if builder not in (req_hello, req_stats, req_metrics, req_peek, req_caps, req_key_status, req_frame):
             tries = 1
         if tries < 1:
             raise ValueError('tries must be positive')
@@ -212,7 +252,7 @@ class Diag:
         def answered(msgs):
             for m in msgs[len(found):]:
                 r = parse(m)
-                if CAPS <= cmd <= FRAME and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
+                if (CAPS <= cmd <= FRAME or cmd == METRICS) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
                     r = None
                 found.append(r if r and r['seq'] == seq and r['cmd'] == cmd | 0x80 else None)
             return any(found)
@@ -376,25 +416,51 @@ def cmd_cfw(d, _args):
     print('%s  (channel v%d, up %d s)' % (h['name'], h['proto'], h['uptime']))
 
 
-def show_stats(s):
+def show_stats(s, metrics=None):
     print('second %d%s%s' % (s['seconds'], '' if s['overlay'] else '  (SYSTEM INFO off)',
                              '  FAST AUDIO on' if s['fast'] else '')
           + ('  (FAST AUDIO refused or undone)' if s['fast_fault'] else ''))
-    if 'dsp' in s:
+    if metrics is not None:
+        show_metrics(metrics)
+    elif 'dsp' in s:
         print('  CPU %5.1f %%   DSP %5.1f %%   DSP peak %5.1f %%'
               % (100 * s['cpu'], 100 * s['dsp'], 100 * s['dsp_peak']))
         print('  %d renders in %d counter ticks: counter %.3f MHz'
               % (s['renders'], s['window'], s['counter_hz'] / 1e6))
     else:
-        print('  no renders this second (audio stopped, or the counter is not running)')
+        print('  CPU/DSP timing unavailable (unsupported or no valid window)')
     blocks = ', '.join('%d:%d' % (o, n) for o, n in enumerate(s['free_blocks']) if n)
     print('  heap free %.2f MB (%d bytes), faults %d, free blocks by order: %s'
           % (s['heap_free'] / 1048576, s['heap_free'], s['heap_faults'], blocks or '-'))
-    print('  sample pool free %.2f MB' % (s['sample_free'] / 1048576))
+    print('  largest free heap block %.2f MB' % (s['heap_largest'] / 1048576))
+    if metrics is not None:
+        print('  sample pool free: unavailable on DN2')
+    else:
+        print('  sample pool free %.2f MB' % (s['sample_free'] / 1048576))
+
+
+def show_metrics(d):
+    print('  metrics window %d, %d CF block interrupts/window (closed at %d)'
+          % (d['windows'], d['window_blocks'], d['blocks']))
+    if 'cpu_relative' in d:
+        print('  CPU relative to rolling best idle window: %.1f %% (idle %d / reference %d)'
+              % (100 * d['cpu_relative'], d['idle_window'], d['idle_reference']))
+    else:
+        print('  relative CPU: unavailable (idle reference warming up or no idle observed)')
+    if 'handler_average' in d:
+        print('  SHARC handler span: average %.1f, maximum %d raw EMUCLK ticks (%d samples, %d zero)'
+              % (d['handler_average'], d['handler_max'], d['handler_samples'], d['handler_zero']))
+    else:
+        print('  SHARC handler span: unavailable')
+    print('  total DSP load, callback cost and peak stack: unavailable')
 
 
 def cmd_stats(d, args):
     last = None
+    try:
+        metrics = decode_metrics(d.call(req_metrics))
+    except _RequestRefused:
+        metrics = None
     for _ in range(int(args[0]) if args else 1):
         while True:
             s = decode_stats(d.call(req_stats))
@@ -402,7 +468,9 @@ def cmd_stats(d, args):
                 break
             time.sleep(0.1)
         last = s['seconds']
-        show_stats(s)
+        if metrics is not None:
+            metrics = decode_metrics(d.call(req_metrics))
+        show_stats(s, metrics)
 
 
 def _range(args):
