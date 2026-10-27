@@ -9,6 +9,8 @@ enum { RK_OK, RK_INVALID, RK_UNKNOWN, RK_BUSY, RK_STALE, RK_OVERLAP, RK_OFF };
 enum { RK_KEY_COUNT = 57 };
 
 int rk_receive(const unsigned char *packed, unsigned length, unsigned char *reply);
+/* A request's 7-bit packing, exactly COUNT bytes long, or 0. */
+int rk_unpack(const unsigned char *src, unsigned length, unsigned char *dst, unsigned count);
 void rk_tick(void *ctrl);
 
 #endif

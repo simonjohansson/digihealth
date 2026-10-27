@@ -1,6 +1,6 @@
 # Digitone II OS 1.12
 
-Experimental DigiHealth 1.5 with core-dn2 0.1. No FAST AUDIO, SRAM timer or
+Experimental DigiHealth 1.6 with core-dn2 0.1. No FAST AUDIO, SRAM timer or
 SHARC code changes. `tools/digiusb.py stats` now also reports relative CPU
 activity, raw SHARC handler spans and the largest free ColdFire heap block.
 [Measurement definitions, protocol and limits](METRICS.md) describe the exact
@@ -29,7 +29,7 @@ No firmware or generated `.elemod`/map belongs in Git.
 ```sh
 ELEKLOADER_CROSS=m68k-elf- PYTHONPATH=/path/to/elekloader python build.py --stock /path/to/Digitone_II_OS1.12.syx
 python -m elekloader.sdk.build /path/to/elekloader/mods/core-dn2 --stock /path/to/Digitone_II_OS1.12.syx
-python -m elekloader.lint out/digihealth-1.5.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
+python -m elekloader.lint out/digihealth-1.6.elemod --stock /path/to/Digitone_II_OS1.12.syx --with /path/to/core-0.1.elemod --json
 ```
 
 Use the selected mise Python runtime for those commands. Link core,
@@ -40,6 +40,24 @@ Keep the resulting firmware and exact link manifest together locally.
 parts of the stock UI. This is intentional diagnostic drawing and can look
 like tearing. Its PERSONALIZE test also consumes TEMPO until reboot. Omit
 hooks-check from a normal DigiHealth build.
+
+## DSP memory
+
+With elekloader's core-dn2 0.3, which has the DSP peek (#98), and a build
+with a SHARC mod, `dsppeek` reads the DSP's L1 or L2 memory, in its own byte order:
+
+```sh
+python tools/digiusb.py dsppeek 0x2df000 4          # the filter stack's guard word
+python tools/digiusb.py dsppeek 0x200a8000 1024 data.bin
+```
+
+One halfword arrives per audio block, about 3 KB/s. Commands `DSP_PEEK` 0x06
+(u32 address, u16 words: starts a read) and `DSP_PEEK_READ` 0x07 (u16 first,
+u16 words up to 256: halfwords received and expected, then the words,
+big-endian) carry it; status 1 is a refused address, 2 a core without the
+peek, 3 a read still arriving. Without a SHARC mod no answer comes and the
+client times out. The core's peek and DSP_METRICS's callback counters claim
+the same reply word, so a build has one or the other.
 
 ## Remote input and readback
 

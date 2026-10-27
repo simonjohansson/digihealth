@@ -1,6 +1,6 @@
 {
  "id": "digihealth",
- "version": "1.5",
+ "version": "1.6",
  "title": "digihealth",
  "category": "Diagnostics",
  "author": "irpina",
@@ -15,7 +15,8 @@
   "io.c",
   "metrics-core.c",
   "metrics-core.s",
-  "dsp-metrics.c"
+  "dsp-metrics.c",
+  "dsp-peek.c"
  ],
  "defsym": {
   "DN2": 1,

@@ -84,7 +84,7 @@ static void bitmap(unsigned char *p, unsigned supported)
 }
 
 /* Exact canonical packing prevents an oversized request becoming a valid prefix. */
-static int unpack(const unsigned char *src, unsigned length, unsigned char *dst, unsigned count)
+int rk_unpack(const unsigned char *src, unsigned length, unsigned char *dst, unsigned count)
 {
     unsigned at = 0, out = 0, n, i, header;
     if (length != count + (count + 6) / 7)
@@ -127,7 +127,7 @@ int rk_receive(const unsigned char *packed, unsigned length, unsigned char *repl
     reply[2] = command | 0x80;
     reply[3] = RK_INVALID;
     count = command == RK_CAPS ? 3 : command == RK_ACTION ? 15 : command == RK_STATUS ? 11 : 7;
-    if (!unpack(packed, length, request, count)) return 4;
+    if (!rk_unpack(packed, length, request, count)) return 4;
     reply[3] = RK_OK;
 #if RK_PRODUCT == 2
     if (fw_panel_variant & 0x80000) {

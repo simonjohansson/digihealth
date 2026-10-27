@@ -4,6 +4,7 @@
     python digiusb.py cfw                  which mod answers, and its uptime
     python digiusb.py stats [N]            CPU, DSP, clock, heap: N readings, one a second
     python digiusb.py peek ADDR [LEN]      hex dump of DDR or the SRAM (0x8000xxxx)
+    python digiusb.py dsppeek ADDR [LEN] [OUT]  DN2: DSP memory (L1/L2), through core-dn2's peek
     python digiusb.py dump ADDR LEN OUT    DDR to a file
     python digiusb.py selftest             check the encoder and decoder, no device
     python digiusb.py turn A -3          Digitone II: bounded encoder turn
@@ -52,6 +53,8 @@ PEEK_RANGES = ((0x40000000, 0x48000000), (0x80000000, 0x80010000))
 ORDERS = 24
 METRICS = 4                 # DN2-only relative CPU/raw handler window
 DSP_METRICS = 5             # optional measured-L2 callback transport
+DSP_PEEK, DSP_PEEK_READ = 6, 7  # DSP memory through core-dn2's peek (Elekloader #98)
+DSP_PEEK_MAX, DSP_READ_MAX = 1024, 256
 RENDERS_PER_S = 1500          # the audio render: 48 kHz in blocks of 32
 
 
@@ -128,6 +131,16 @@ def req_key_status(seq, session, operation):
 
 def req_cancel(seq, session):
     return request(seq, CANCEL, struct.pack('>I', session))
+
+
+def req_dsp_peek(seq, addr, words):
+    if addr % 4 or not 1 <= words <= DSP_PEEK_MAX:
+        raise ValueError('a DSP peek is 1..%d words from a word-aligned address' % DSP_PEEK_MAX)
+    return request(seq, DSP_PEEK, struct.pack('>IH', addr, words))
+
+
+def req_dsp_peek_read(seq, first, words):
+    return request(seq, DSP_PEEK_READ, struct.pack('>HH', first, words))
 
 
 def req_peek(seq, addr, length):
@@ -294,7 +307,8 @@ class Diag:
 
     def call(self, builder, *args, timeout=2.0, tries=2):
         """Only known reads may be retried; actions need explicit status recovery."""
-        if builder not in (req_hello, req_stats, req_metrics, req_dsp_metrics, req_peek, req_caps, req_key_status, req_frame):
+        if builder not in (req_hello, req_stats, req_metrics, req_dsp_metrics, req_peek, req_caps, req_key_status, req_frame,
+                           req_dsp_peek_read):
             tries = 1
         if tries < 1:
             raise ValueError('tries must be positive')
@@ -316,14 +330,14 @@ class Diag:
         def answered(msgs):
             for m in msgs[len(found):]:
                 r = parse(m)
-                if (CAPS <= cmd <= FRAME or cmd in (METRICS, DSP_METRICS)) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
+                if (CAPS <= cmd <= FRAME or cmd in (METRICS, DSP_METRICS, DSP_PEEK, DSP_PEEK_READ)) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
                     r = None
                 found.append(r if r and r['seq'] == seq and r['cmd'] == cmd | 0x80 else None)
             return any(found)
         self.port.receive(timeout, until=answered)
         for r in found:
             if r:
-                if r['status']:
+                if r['status'] and not (cmd == DSP_PEEK_READ and r['status'] == 3):  # 3: still arriving
                     raise _RequestRefused('the mod refused 0x%02x: %s'
                                           % (cmd, STATUS.get(r['status'], r['status'])))
                 return r['payload']
@@ -573,6 +587,42 @@ def cmd_peek(d, args):
                                    ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)))
 
 
+def dsp_peek(d, addr, length):
+    """LENGTH bytes of DSP memory from the word-aligned ADDR, in the DSP's (little-endian) byte
+    order. One halfword arrives per audio block, so this takes about length / 3000 seconds."""
+    words, out = (length + 3) // 4, bytearray()
+    for at in range(0, words, DSP_PEEK_MAX):
+        n = min(DSP_PEEK_MAX, words - at)
+        d.call(req_dsp_peek, addr + 4 * at, n)
+        deadline = time.monotonic() + 2 + 4 * n / RENDERS_PER_S
+        while True:
+            received, total = struct.unpack_from('>HH', d.call(req_dsp_peek_read, 0, 1))
+            if received == total:
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError('the DSP did not answer: only a build with a SHARC mod has the DSP side')
+            time.sleep(0.05)
+        for first in range(0, n, DSP_READ_MAX):
+            m = min(DSP_READ_MAX, n - first)
+            payload = d.call(req_dsp_peek_read, first, m)
+            out += b''.join(struct.pack('<I', w) for w in struct.unpack_from('>%dI' % m, payload, 4))
+    return bytes(out[:length])
+
+
+def cmd_dsppeek(d, args):
+    addr, length = int(args[0], 0), int(args[1], 0) if len(args) > 1 else 64
+    data = dsp_peek(d, addr, length)
+    if len(args) > 2:
+        with open(args[2], 'wb') as fh:
+            fh.write(data)
+        print('saved %s (%d bytes of DSP memory from 0x%08x)' % (args[2], len(data), addr))
+        return
+    for i in range(0, len(data), 16):
+        row = data[i:i + 16]
+        print('%08x  %-48s %s' % (addr + i, row.hex(' '),
+                                   ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)))
+
+
 def cmd_dump(d, args):
     addr, length = _range(args[:2])
     data = peek(d, addr, length)
@@ -651,7 +701,7 @@ def selftest():
     print('selftest ok')
 
 
-COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
+COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'dsppeek': cmd_dsppeek, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
 
 
 def main(argv=None):
