@@ -5,6 +5,7 @@
     python digiusb.py stats [N]            CPU, DSP, clock, heap: N readings, one a second
     python digiusb.py peek ADDR [LEN]      hex dump of DDR or the SRAM (0x8000xxxx)
     python digiusb.py dsppeek ADDR [LEN] [OUT]  DN2: DSP memory (L1/L2), through core-dn2's peek
+    python digiusb.py dspbusy [N]          DN2: time outside the DSP's idle task, and the busiest window
     python digiusb.py dump ADDR LEN OUT    DDR to a file
     python digiusb.py selftest             check the encoder and decoder, no device
     python digiusb.py turn A -3          Digitone II: bounded encoder turn
@@ -55,6 +56,7 @@ METRICS = 4                 # DN2-only relative CPU/raw handler window
 DSP_METRICS = 5             # optional measured-L2 callback transport
 DSP_PEEK, DSP_PEEK_READ = 6, 7  # DSP memory through core-dn2's peek (Elekloader #98)
 DSP_PEEK_MAX, DSP_READ_MAX = 1024, 256
+DSP_BUSY = 0x2e0630          # core-dn2 0.3's CORE_DSP_BUSY_RECORD: seq, idle, total, busiest idle, total, seq
 RENDERS_PER_S = 1500          # the audio render: 48 kHz in blocks of 32
 
 
@@ -609,6 +611,34 @@ def dsp_peek(d, addr, length):
     return bytes(out[:length])
 
 
+def dsp_busy(d):
+    """How busy the DSP was over core-dn2's last 1024-block window (about 0.68 s) and its busiest
+    window since boot: the share of cycles outside FreeRTOS's idle task, None before a window.
+    Stock's audio task waits inside that share, so it is not headroom."""
+    for _ in range(3):
+        seq, idle, total, peak_idle, peak_total, seq2 = struct.unpack('<6I', dsp_peek(d, DSP_BUSY, 24))
+        if seq == seq2:
+            break
+    else:
+        raise TimeoutError('the load record kept changing while it was read')
+    if not seq or not total or not peak_total:
+        return None
+    return {'windows': seq, 'busy': 1 - idle / total, 'peak': 1 - peak_idle / peak_total,
+            'cycles_per_block': total / 1024}
+
+
+def cmd_dspbusy(d, args):
+    for i in range(int(args[0]) if args else 1):
+        if i:
+            time.sleep(1)
+        r = dsp_busy(d)
+        if r is None:
+            print('no window yet (a build with a SHARC mod and core-dn2 0.3 publishes one every 0.68 s)')
+        else:
+            print('DSP busy %5.1f%%  busiest window %5.1f%%  (%.0f cycles a block, window %d)'
+                  % (100 * r['busy'], 100 * r['peak'], r['cycles_per_block'], r['windows']))
+
+
 def cmd_dsppeek(d, args):
     addr, length = int(args[0], 0), int(args[1], 0) if len(args) > 1 else 64
     data = dsp_peek(d, addr, length)
@@ -701,7 +731,7 @@ def selftest():
     print('selftest ok')
 
 
-COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'dsppeek': cmd_dsppeek, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
+COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'dsppeek': cmd_dsppeek, 'dspbusy': cmd_dspbusy, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
 
 
 def main(argv=None):

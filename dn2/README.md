@@ -59,6 +59,12 @@ peek, 3 a read still arriving. Without a SHARC mod no answer comes and the
 client times out. The core's peek and DSP_METRICS's callback counters claim
 the same reply word, so a build has one or the other.
 
+`python tools/digiusb.py dspbusy [N]` reads core-dn2 0.3's record of how
+busy the DSP is: the share of cycles outside FreeRTOS's idle task over the
+last 0.68 s and over the busiest such window. On a unit it is about 80% with
+nothing playing and 65% with 64 notes held: stock's audio task holds the DSP
+while it waits, so this is not headroom.
+
 ## Remote input and readback
 
 ```sh
