@@ -25,7 +25,11 @@ on the DN2 branch: [build, remote controls, screen readback and validation](dn2/
 It requires core-dn2 0.1. Its measurement branch adds relative CPU and raw SHARC handler spans over USB;
 1.5 also supports [optional L2 callback counters](dn2/DSP-METRICS.md), pending
 separate physical qualification. 1.6 reads DSP memory (`dsppeek`) through core-dn2 0.3's
-DSP peek. Total DSP load and FAST AUDIO are unavailable.
+DSP peek. Its `dspbusy` command requires the optional
+[dspbusy-dn2 companion](https://github.com/simonjohansson/elekloader/tree/better-memory/mods/dspbusy-dn2)
+and a SHARC mod; without the companion it reports `no window yet`. The
+measure is time outside the DSP's idle task, not headroom. Total DSP load
+and FAST AUDIO are unavailable.
 
 It is an [elekloader](https://github.com/irpina/elekloader) mod.
 elekloader builds a custom OS file on your own machine, from your stock OS
