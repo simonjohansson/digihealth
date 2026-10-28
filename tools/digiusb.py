@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Read digihealth diagnostics or operate bounded Digitakt/Digitone mk1 keys over USB MIDI.
+"""Read digihealth diagnostics or operate bounded Digitakt/Digitone input over USB MIDI.
 
     python digiusb.py cfw                  which mod answers, and its uptime
     python digiusb.py stats [N]            CPU, DSP, clock, heap: N readings, one a second
     python digiusb.py peek ADDR [LEN]      hex dump of DDR or the SRAM (0x8000xxxx)
+    python digiusb.py dsppeek ADDR [LEN] [OUT]  DN2: DSP memory (L1/L2), through core-dn2's peek
+    python digiusb.py dspbusy [N]          DN2: time outside the DSP's idle task, and the busiest window
     python digiusb.py dump ADDR LEN OUT    DDR to a file
     python digiusb.py selftest             check the encoder and decoder, no device
+    python digiusb.py turn A -3          Digitone II: bounded encoder turn
+    python digiusb.py screen OUTPUT.pbm  Digitone II: composed OLED readback
     python digiusb.py keys YES
     python digiusb.py keys 'FUNC(SRC)'
     python digiusb.py keys 'FUNC(SRC),DOWN,DOWN,DOWN,YES'
@@ -31,7 +35,8 @@ import secrets
 import struct
 import sys
 import time
-from keymap import KEYS, MAPS, SUPPORTED
+from keymap import KEYS, MAPS, SUPPORTED, DN2_IDS
+KEY_NAMES = set(KEYS) | set(DN2_IDS)
 
 HEADER = bytes([0xF0, 0x00, 0x20, 0x3C, 0x7D, 0x00])
 HELLO, STATS, PEEK = 0x01, 0x02, 0x03
@@ -39,13 +44,19 @@ STATUS = {0: 'ok', 1: 'refused', 2: 'unknown command', 3: 'busy',
           4: 'stale session or operation', 5: 'physical overlap',
           6: 'remote keys are off (SETTINGS > REMOTE KEYS)'}
 CAPS, OPEN, ACTION, KEY_STATUS, CANCEL = range(0x10, 0x15)
-PRESS, RELEASE, TAP = 1, 2, 3
+PRESS, RELEASE, TAP, TURN = 1, 2, 3, 4
+FRAME = 0x15
 KEY_STATES = ('none', 'accepted', 'completed', 'cancelled', 'expired', 'failed')
 PEEK_MAX = 1024
 # PEEK reads DDR (cached view) and the 64 KB SRAM, and never the peripheral
 # space (a read there can clear a status bit).
 PEEK_RANGES = ((0x40000000, 0x48000000), (0x80000000, 0x80010000))
 ORDERS = 24
+METRICS = 4                 # DN2-only relative CPU/raw handler window
+DSP_METRICS = 5             # optional measured-L2 callback transport
+DSP_PEEK, DSP_PEEK_READ = 6, 7  # DSP memory through core-dn2's peek (Elekloader #98)
+DSP_PEEK_MAX, DSP_READ_MAX = 1024, 256
+DSP_BUSY = 0x2e0630          # core-dn2 0.3's CORE_DSP_BUSY_RECORD: seq, idle, total, busiest idle, total, seq
 RENDERS_PER_S = 1500          # the audio render: 48 kHz in blocks of 32
 
 
@@ -88,12 +99,24 @@ def req_hello(seq):
     return request(seq, HELLO)
 
 
+def req_metrics(seq):
+    return request(seq, METRICS)
+
+
+def req_dsp_metrics(seq):
+    return request(seq, DSP_METRICS)
+
+
 def req_stats(seq):
     return request(seq, STATS)
 
 
 def req_caps(seq):
     return request(seq, CAPS)
+
+
+def req_frame(seq):
+    return request(seq, FRAME)
 
 
 def req_open(seq, session):
@@ -110,6 +133,16 @@ def req_key_status(seq, session, operation):
 
 def req_cancel(seq, session):
     return request(seq, CANCEL, struct.pack('>I', session))
+
+
+def req_dsp_peek(seq, addr, words):
+    if addr % 4 or not 1 <= words <= DSP_PEEK_MAX:
+        raise ValueError('a DSP peek is 1..%d words from a word-aligned address' % DSP_PEEK_MAX)
+    return request(seq, DSP_PEEK, struct.pack('>IH', addr, words))
+
+
+def req_dsp_peek_read(seq, first, words):
+    return request(seq, DSP_PEEK_READ, struct.pack('>HH', first, words))
 
 
 def req_peek(seq, addr, length):
@@ -150,18 +183,112 @@ def decode_stats(p):
     d = dict(zip(STATS_FIELDS, struct.unpack_from(STATS_FMT, p)))
     off = struct.calcsize(STATS_FMT)
     d['free_blocks'] = list(struct.unpack_from('>%dH' % ORDERS, p, off))
+    d['heap_largest'] = max((16 << order for order, count in enumerate(d['free_blocks'])
+                             if count), default=0)
     d['valid'] = bool(d['flags'] & 1)
     d['overlay'] = bool(d['flags'] & 2)
     d['fast'] = bool(d['flags'] & 4)            # FAST AUDIO: SRAM copies run
     d['fast_fault'] = bool(d['flags'] & 8)      # refused, or undone
     w, n = d['window'], d['renders']
-    if w and n:
+    if d['valid'] and w and n:
         period = w / n                               # counter ticks per render
         d['counter_hz'] = period * RENDERS_PER_S
         d['dsp'] = d['render_ticks'] / w
         d['dsp_peak'] = d['render_max'] / period
         d['cpu'] = 1 - max(0, d['idle_ticks'] - d['idle_render']) / w
     return d
+
+
+# DN2 METRICS v1: a closed 1500-block window, all integers big-endian.
+METRICS_FIELDS = ('magic', 'version', 'bytes', 'flags', 'blocks', 'windows',
+                  'window_blocks', 'idle_total', 'idle_window', 'idle_reference',
+                  'handler_sum_hi', 'handler_sum_lo', 'handler_max',
+                  'handler_samples', 'handler_zero')
+METRICS_FMT = '>IHH12I'
+
+
+def decode_metrics(p):
+    if len(p) != struct.calcsize(METRICS_FMT):
+        raise ValueError('invalid metrics reply length')
+    d = dict(zip(METRICS_FIELDS, struct.unpack(METRICS_FMT, p)))
+    if (d['magic'] != 0x44484d31 or d['version'] != 1 or d['bytes'] != len(p)
+            or d['flags'] & ~7 or d['window_blocks'] != 1500):
+        raise ValueError('unsupported metrics layout')
+    closed, cpu, handler = (bool(d['flags'] & bit) for bit in (1, 2, 4))
+    n, zero = d['handler_samples'], d['handler_zero']
+    total = (d['handler_sum_hi'] << 32) | d['handler_sum_lo']
+    if (cpu and (not closed or d['windows'] < 3 or not d['idle_reference']
+                 or d['idle_window'] > d['idle_reference'])
+            or handler != bool(n) or handler and not closed
+            or closed and n + zero != d['window_blocks']
+            or not closed and (d['flags'] or d['windows'] or n or zero)
+            or n and not (d['handler_max'] <= total <= n * d['handler_max'])
+            or not n and (total or d['handler_max'])):
+        raise ValueError('inconsistent metrics window')
+    if cpu:
+        d['cpu_relative'] = 1 - d['idle_window'] / d['idle_reference']
+    if handler:
+        d['handler_average'] = total / n
+    return d
+
+
+
+# Optional DN2 callback totals: raw timestamps/counters, not DSP utilization.
+DSP_METRICS_FIELDS = ('magic', 'version', 'bytes', 'flags', 'published_blocks',
+                      'now_blocks', 'sequence', 'callback_count', 'sum_hi', 'sum_lo',
+                      'maximum', 'clock', 'producer_flags', 'accepted', 'crc_errors',
+                      'dropped', 'reserved')
+DSP_METRICS_FMT = '>IHH14I'
+
+
+def decode_dsp_metrics(p):
+    if len(p) != struct.calcsize(DSP_METRICS_FMT):
+        raise ValueError('invalid DSP metrics reply length')
+    d = dict(zip(DSP_METRICS_FIELDS, struct.unpack(DSP_METRICS_FMT, p)))
+    if (d['magic'] != 0x44484331 or d['version'] != 1 or d['bytes'] != len(p)
+            or d['flags'] & ~3 or d['reserved'] or d['sequence'] > 7):
+        raise ValueError('unsupported DSP metrics layout')
+    fresh, seen = bool(d['flags'] & 1), bool(d['flags'] & 2)
+    d['age_blocks'] = (d['now_blocks'] - d['published_blocks']) & 0xffffffff
+    if (fresh != (seen and d['age_blocks'] <= 64)
+            or seen and d['producer_flags'] != 1
+            or not seen and any(d[n] for n in ('published_blocks', 'sequence', 'callback_count',
+                                              'sum_hi', 'sum_lo', 'maximum', 'clock',
+                                              'producer_flags', 'accepted'))):
+        raise ValueError('inconsistent DSP metrics snapshot')
+    d['available'] = fresh
+    d['sum_ticks'] = (d['sum_hi'] << 32) | d['sum_lo']
+    return d
+
+
+def callback_window(previous, current):
+    """Use bounded unsigned deltas; detected resets/gaps need a new baseline."""
+    if not previous or not previous['available'] or not current['available']:
+        return None
+    blocks = (current['published_blocks'] - previous['published_blocks']) & 0xffffffff
+    count = (current['callback_count'] - previous['callback_count']) & 0xffffffff
+    ticks = (current['sum_ticks'] - previous['sum_ticks']) & 0xffffffffffffffff
+    if (not blocks or blocks >= 0x80000000 or not count or count > blocks + 2
+            or ticks > count * current['maximum'] or current['maximum'] < previous['maximum']):
+        return None
+    return {'count': count, 'ticks': ticks, 'average': ticks / count}
+
+
+def show_dsp_metrics(current, previous=None):
+    if current is None or not current['available']:
+        print('  SHARC callback timing: unavailable (no fresh measured-L2 snapshot)')
+        return
+    window = callback_window(previous, current)
+    if window:
+        print('  SHARC render callback: average %.1f raw EMUCLK ticks (%d calls since previous snapshot)'
+              % (window['average'], window['count']))
+    else:
+        print('  SHARC render callback: waiting for a second coherent counter baseline')
+    print('  callback maximum since producer boot: %d raw ticks; transport age %d CF blocks'
+          % (current['maximum'], current['age_blocks']))
+    if current['crc_errors'] or current['dropped']:
+        print('  callback transport: %d CRC errors, %d dropped snapshots'
+              % (current['crc_errors'], current['dropped']))
 
 
 def decode_peek(p):
@@ -182,7 +309,8 @@ class Diag:
 
     def call(self, builder, *args, timeout=2.0, tries=2):
         """Only known reads may be retried; actions need explicit status recovery."""
-        if builder not in (req_hello, req_stats, req_peek, req_caps, req_key_status):
+        if builder not in (req_hello, req_stats, req_metrics, req_dsp_metrics, req_peek, req_caps, req_key_status, req_frame,
+                           req_dsp_peek_read):
             tries = 1
         if tries < 1:
             raise ValueError('tries must be positive')
@@ -204,14 +332,14 @@ class Diag:
         def answered(msgs):
             for m in msgs[len(found):]:
                 r = parse(m)
-                if CAPS <= cmd <= CANCEL and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
+                if (CAPS <= cmd <= FRAME or cmd in (METRICS, DSP_METRICS, DSP_PEEK, DSP_PEEK_READ)) and bytes(m) != HEADER + pack7(unpack7(bytes(m)[6:-1])) + b'\xf7':
                     r = None
                 found.append(r if r and r['seq'] == seq and r['cmd'] == cmd | 0x80 else None)
             return any(found)
         self.port.receive(timeout, until=answered)
         for r in found:
             if r:
-                if r['status']:
+                if r['status'] and not (cmd == DSP_PEEK_READ and r['status'] == 3):  # 3: still arriving
                     raise _RequestRefused('the mod refused 0x%02x: %s'
                                           % (cmd, STATUS.get(r['status'], r['status'])))
                 return r['payload']
@@ -227,7 +355,7 @@ class RemoteKeys:
         if len(payload) != 19:
             raise ValueError('invalid key capabilities')
         revision, product, major, minor, keys, default, tap, hold = struct.unpack('>HBBBQHHH', payload)
-        if (revision != 2 or (product, major, minor) not in ((1, 1, 53), (1, 1, 54), (2, 1, 44))
+        if ((revision, product, major, minor) not in ((2, 1, 1, 53), (2, 1, 1, 54), (2, 2, 1, 44), (3, 3, 1, 12))
                 or keys != SUPPORTED.get(product) or not 1 <= default <= tap <= 250
                 or not 1 <= hold <= 2000):
             raise ValueError('unsupported key helper, device, OS or limits')
@@ -273,10 +401,20 @@ class RemoteKeys:
         limit = self.max_hold if action == PRESS else self.max_tap
         if action == RELEASE and duration != 0 or action != RELEASE and not 1 <= duration <= limit:
             raise ValueError('invalid key duration')
+        return self._action(action, (DN2_IDS if self.product == 3 else KEYS)[key], duration)
+
+    def turn(self, encoder, detents):
+        if self.product != 3 or not isinstance(encoder, int) or not 1 <= encoder <= 9:
+            raise ValueError('encoder control requires Digitone II and encoder 1..9')
+        if not isinstance(detents, int) or detents == 0 or not -30 <= detents <= 30:
+            raise ValueError('use -30..30 detents, excluding zero')
+        return self._action(TURN, encoder, detents & 0xffff)
+
+    def _action(self, action, key, duration):
         self.operation += 1
         try:
             payload = self.diag.call(req_action, self.session, self.operation, action,
-                                     KEYS[key], duration, timeout=0.25)
+                                     key, duration, timeout=0.25)
             report = self._report(payload, self.operation)
         except _RequestRefused:
             self.operation -= 1
@@ -318,7 +456,7 @@ def key_sequence(text):
             raise argparse.ArgumentTypeError('use KEY or HOLD(TAP), separated by commas')
         outer, inner = match.groups()
         hold, tap = (outer, inner) if inner else (None, outer)
-        if tap not in KEYS or hold is not None and hold not in KEYS:
+        if tap not in KEY_NAMES or hold is not None and hold not in KEY_NAMES:
             raise argparse.ArgumentTypeError('unknown button in %r' % token.strip())
         if hold == tap:
             raise argparse.ArgumentTypeError('held and tapped buttons must differ')
@@ -358,25 +496,58 @@ def cmd_cfw(d, _args):
     print('%s  (channel v%d, up %d s)' % (h['name'], h['proto'], h['uptime']))
 
 
-def show_stats(s):
+def show_stats(s, metrics=None, dsp_metrics=None, previous_dsp=None):
     print('second %d%s%s' % (s['seconds'], '' if s['overlay'] else '  (SYSTEM INFO off)',
                              '  FAST AUDIO on' if s['fast'] else '')
           + ('  (FAST AUDIO refused or undone)' if s['fast_fault'] else ''))
-    if 'dsp' in s:
+    if metrics is not None:
+        show_metrics(metrics)
+        show_dsp_metrics(dsp_metrics, previous_dsp)
+    elif 'dsp' in s:
         print('  CPU %5.1f %%   DSP %5.1f %%   DSP peak %5.1f %%'
               % (100 * s['cpu'], 100 * s['dsp'], 100 * s['dsp_peak']))
         print('  %d renders in %d counter ticks: counter %.3f MHz'
               % (s['renders'], s['window'], s['counter_hz'] / 1e6))
     else:
-        print('  no renders this second (audio stopped, or the counter is not running)')
+        print('  CPU/DSP timing unavailable (unsupported or no valid window)')
     blocks = ', '.join('%d:%d' % (o, n) for o, n in enumerate(s['free_blocks']) if n)
     print('  heap free %.2f MB (%d bytes), faults %d, free blocks by order: %s'
           % (s['heap_free'] / 1048576, s['heap_free'], s['heap_faults'], blocks or '-'))
-    print('  sample pool free %.2f MB' % (s['sample_free'] / 1048576))
+    print('  largest free heap block %.2f MB' % (s['heap_largest'] / 1048576))
+    if metrics is not None:
+        print('  sample pool free: unavailable on DN2')
+    else:
+        print('  sample pool free %.2f MB' % (s['sample_free'] / 1048576))
+
+
+def show_metrics(d):
+    print('  metrics window %d, %d CF block interrupts/window (closed at %d)'
+          % (d['windows'], d['window_blocks'], d['blocks']))
+    if 'cpu_relative' in d:
+        print('  CPU relative to rolling best idle window: %.1f %% (idle %d / reference %d)'
+              % (100 * d['cpu_relative'], d['idle_window'], d['idle_reference']))
+    else:
+        print('  relative CPU: unavailable (idle reference warming up or no idle observed)')
+    if 'handler_average' in d:
+        print('  SHARC handler span: average %.1f, maximum %d raw EMUCLK ticks (%d samples, %d zero)'
+              % (d['handler_average'], d['handler_max'], d['handler_samples'], d['handler_zero']))
+    else:
+        print('  SHARC handler span: unavailable')
+    print('  total DSP load and peak stack: unavailable')
 
 
 def cmd_stats(d, args):
     last = None
+    try:
+        metrics = decode_metrics(d.call(req_metrics))
+    except _RequestRefused:
+        metrics = None
+    dsp_metrics = None
+    if metrics is not None:
+        try:
+            dsp_metrics = decode_dsp_metrics(d.call(req_dsp_metrics))
+        except _RequestRefused:
+            pass
     for _ in range(int(args[0]) if args else 1):
         while True:
             s = decode_stats(d.call(req_stats))
@@ -384,7 +555,12 @@ def cmd_stats(d, args):
                 break
             time.sleep(0.1)
         last = s['seconds']
-        show_stats(s)
+        if metrics is not None:
+            metrics = decode_metrics(d.call(req_metrics))
+        previous_dsp = dsp_metrics
+        if dsp_metrics is not None:
+            dsp_metrics = decode_dsp_metrics(d.call(req_dsp_metrics))
+        show_stats(s, metrics, dsp_metrics, previous_dsp)
 
 
 def _range(args):
@@ -413,12 +589,121 @@ def cmd_peek(d, args):
                                    ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)))
 
 
+def dsp_peek(d, addr, length):
+    """LENGTH bytes of DSP memory from the word-aligned ADDR, in the DSP's (little-endian) byte
+    order. One halfword arrives per audio block, so this takes about length / 3000 seconds."""
+    words, out = (length + 3) // 4, bytearray()
+    for at in range(0, words, DSP_PEEK_MAX):
+        n = min(DSP_PEEK_MAX, words - at)
+        d.call(req_dsp_peek, addr + 4 * at, n)
+        deadline = time.monotonic() + 2 + 4 * n / RENDERS_PER_S
+        while True:
+            received, total = struct.unpack_from('>HH', d.call(req_dsp_peek_read, 0, 1))
+            if received == total:
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError('the DSP did not answer: only a build with a SHARC mod has the DSP side')
+            time.sleep(0.05)
+        for first in range(0, n, DSP_READ_MAX):
+            m = min(DSP_READ_MAX, n - first)
+            payload = d.call(req_dsp_peek_read, first, m)
+            out += b''.join(struct.pack('<I', w) for w in struct.unpack_from('>%dI' % m, payload, 4))
+    return bytes(out[:length])
+
+
+def dsp_busy(d):
+    """How busy the DSP was over core-dn2's last 1024-block window (about 0.68 s) and its busiest
+    window since boot: the share of cycles outside FreeRTOS's idle task, None before a window.
+    Stock's audio task waits inside that share, so it is not headroom."""
+    for _ in range(3):
+        seq, idle, total, peak_idle, peak_total, seq2 = struct.unpack('<6I', dsp_peek(d, DSP_BUSY, 24))
+        if seq == seq2:
+            break
+    else:
+        raise TimeoutError('the load record kept changing while it was read')
+    if not seq or not total or not peak_total:
+        return None
+    return {'windows': seq, 'busy': 1 - idle / total, 'peak': 1 - peak_idle / peak_total,
+            'cycles_per_block': total / 1024}
+
+
+def cmd_dspbusy(d, args):
+    for i in range(int(args[0]) if args else 1):
+        if i:
+            time.sleep(1)
+        r = dsp_busy(d)
+        if r is None:
+            print('no window yet (a build with a SHARC mod and core-dn2 0.3 publishes one every 0.68 s)')
+        else:
+            print('DSP busy %5.1f%%  busiest window %5.1f%%  (%.0f cycles a block, window %d)'
+                  % (100 * r['busy'], 100 * r['peak'], r['cycles_per_block'], r['windows']))
+
+
+def cmd_dsppeek(d, args):
+    addr, length = int(args[0], 0), int(args[1], 0) if len(args) > 1 else 64
+    data = dsp_peek(d, addr, length)
+    if len(args) > 2:
+        with open(args[2], 'wb') as fh:
+            fh.write(data)
+        print('saved %s (%d bytes of DSP memory from 0x%08x)' % (args[2], len(data), addr))
+        return
+    for i in range(0, len(data), 16):
+        row = data[i:i + 16]
+        print('%08x  %-48s %s' % (addr + i, row.hex(' '),
+                                   ''.join(chr(b) if 32 <= b < 127 else '.' for b in row)))
+
+
 def cmd_dump(d, args):
     addr, length = _range(args[:2])
     data = peek(d, addr, length)
     with open(args[2], 'wb') as fh:
         fh.write(data)
     print('saved %s (%d bytes from 0x%08x)' % (args[2], len(data), addr))
+
+
+def screen(diag):
+    def read():
+        payload = diag.call(req_frame)
+        if len(payload) != 1028:
+            raise ValueError('invalid screen reply')
+        generation, = struct.unpack_from('>I', payload)
+        if not generation:
+            raise ValueError('no composed screen yet')
+        return generation, payload
+    previous, _ = read()  # Also requests a draw after the UI input queue drains.
+    deadline = time.monotonic() + 3
+    while True:
+        generation, payload = read()
+        if generation != previous:
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError('no fresh composed screen after input; stale frame refused')
+        time.sleep(.02)
+    pixels = payload[4:]
+    # Stock Bitmap is column-major, two big-endian words per 64-pixel column.
+    rows = [' '.join('1' if pixels[x * 8 + y // 8] & (0x80 >> (y % 8)) else '0'
+                     for x in range(128)) for y in range(63, -1, -1)]
+    return generation, ('P1\n128 64\n' + '\n'.join(rows) + '\n').encode('ascii')
+
+
+def cmd_screen(diag, args):
+    if len(args) != 1:
+        raise ValueError('use screen OUTPUT.pbm')
+    generation, data = screen(diag)
+    with open(args[0], 'wb') as fh:
+        fh.write(data)
+    print('saved %s (frame %d)' % (args[0], generation))
+
+
+def cmd_turn(diag, args):
+    if len(args) != 2:
+        raise ValueError('use turn ENCODER DETENTS (A..H or LEVEL)')
+    names = {chr(65 + i): i + 1 for i in range(8)} | {'LEVEL': 9}
+    if args[0].upper() not in names:
+        raise ValueError('encoder must be A..H or LEVEL')
+    with RemoteKeys(diag) as keys:
+        keys.turn(names[args[0].upper()], int(args[1]))
+    print('encoder action completed')
 
 
 def selftest():
@@ -446,7 +731,7 @@ def selftest():
     print('selftest ok')
 
 
-COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'keys': cmd_keys}
+COMMANDS = {'cfw': cmd_cfw, 'stats': cmd_stats, 'peek': cmd_peek, 'dump': cmd_dump, 'dsppeek': cmd_dsppeek, 'dspbusy': cmd_dspbusy, 'keys': cmd_keys, 'turn': cmd_turn, 'screen': cmd_screen}
 
 
 def main(argv=None):

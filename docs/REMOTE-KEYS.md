@@ -95,5 +95,29 @@ can delay cleanup; stalls longer than the approximately 32.5-second counter
 wrap can cause further delay. Queue backpressure can also postpone a release.
 The client cancels in its context manager; disconnects rely on firmware leases.
 
-The panel bridge remains a private core candidate in DigiHealth. Released
-Elekloader core exports are unchanged.
+On the mk1 devices the panel bridge remains a private core candidate in
+DigiHealth. Released mk1 Elekloader core exports are unchanged.
+
+
+## Digitone II extension (input revision 3)
+
+Product 3, OS 1.12 advertises revision 3 with the same 19-byte capability
+and report layouts. Its map is `dn2/keys.def`; do not infer names from the
+mk1 maps or firmware IDs. Existing devices keep revision 2 unchanged.
+
+ACTION 4 is TURN: key is encoder 1..9, and the duration field is a signed
+16-bit nonzero detent count in -30..30, encoded big-endian two's complement.
+It uses the same ordered operation, duplicate suppression, status recovery
+and disabled-input gate as buttons. The UI task alone calls the stock
+encoder decoder. Completion is driver acceptance; observe `ev_enc` or the
+screen independently. Buttons use the existing duration/lease semantics,
+with the core's monotonic 8/9 ms clock instead of stopped DTIM0.
+
+Command `0x15 FRAME` takes no arguments (exact canonical three-byte decoded
+request). Reply: `u32 generation, u8 pixels[1024]`. Pixels are 128 columns,
+eight bytes a column, big-endian bits for y=0..63 (y=0 is the bottom).
+The copy is atomic with publication, and only frames with an empty UI
+input queue are published. A request also asks the UI task to compose a
+new frame; the client polls until the generation changes and times out
+instead of returning a stale screen. This is read-only and remains
+available when REMOTE KEYS is off. Unknown/older helpers refuse it.

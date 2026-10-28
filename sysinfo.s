@@ -1,6 +1,9 @@
 | SPDX-License-Identifier: GPL-2.0-or-later
 | digihealth, SYSTEM INFO: the SETTINGS row and the readout, render and idle
 | timing, and the USB diagnostics channel (tools/digiusb.py).
+        .ifdef DN2
+        .include "dn2.inc"
+        .else
         .ifdef  DN144                   | the Digitone mk1 1.44 (dn1/mod.json's port; DN143 is set too)
         .include "dn144.inc"
         .else
@@ -13,6 +16,8 @@
         .include "os153.inc"
         .endif
         .endif
+        .endif
+
         .endif
 
         .equ TICKS_PER_S, 30            | the UI's compose check runs at 30 Hz
@@ -92,6 +97,17 @@ item_change:
 
 | draw(payload, item, bmp, x, y): the checkbox (like 0x400b9fc2)
 item_draw:
+        .ifdef DN2
+        moveq #0, %d0
+        move.b enabled, %d0
+        move.l %d0, -(%sp)
+        move.l 24(%sp), -(%sp)
+        move.l 24(%sp), -(%sp)
+        move.l 24(%sp), -(%sp)
+        jsr dn2_checkbox
+        lea 16(%sp), %sp
+        rts
+        .else
         moveq   #0, %d0
         tst.b   enabled
         beq.s   1f
@@ -106,6 +122,7 @@ item_draw:
         move.l  %d1, 16(%sp)
         clr.l   20(%sp)
         jmp     BLIT
+        .endif
         .ifdef  RK_KEYS
 | ev_settings handler: the REMOTE KEYS row. It is on at power-on (rk_off is
 | .bss, so zero); off, remote_keys.c refuses key commands and lets go of
@@ -162,6 +179,18 @@ rk_change:                              | RIGHT on, LEFT off
 1:      rts
 
 rk_draw:
+        .ifdef DN2
+        moveq #0, %d0
+        move.b rk_off, %d0
+        eori.l #1, %d0
+        move.l %d0, -(%sp)
+        move.l 24(%sp), -(%sp)
+        move.l 24(%sp), -(%sp)
+        move.l 24(%sp), -(%sp)
+        jsr dn2_checkbox
+        lea 16(%sp), %sp
+        rts
+        .else
         moveq   #0x1c, %d0
         tst.b   rk_off
         beq.s   1f
@@ -176,6 +205,7 @@ rk_draw:
         move.l  %d1, 16(%sp)
         clr.l   20(%sp)
         jmp     BLIT
+        .endif
         .endif
 
 | ev_render_in / ev_render_out handlers: render_in and render_out without the
@@ -232,6 +262,10 @@ task_switch:
 
         .globl  si_tick
 si_tick:
+        .ifdef DN2
+        jsr core_millis
+        move.l %d0, dn2_clock
+        .endif
         addq.l  #1, ticks
         move.l  ticks, %d0
         cmpi.l  #TICKS_PER_S, %d0
@@ -608,7 +642,11 @@ diag_rx:
         pea     rp
         move.l  %d0, -(%sp)
         move.l  %a0, -(%sp)
+        .ifdef DN2
+        jsr     dn2_receive
+        .else
         jsr     rk_receive
+        .endif
         lea     12(%sp), %sp
         tst.l   %d0
         beq.s   90f
@@ -651,7 +689,14 @@ diag_rx:
         bra.w   8f
 1:      moveq   #DIAG_PROTO, %d0        | HELLO
         move.w  %d0, (%a1)+
+        .ifdef DN2
+        move.l dn2_clock, %d0
+        move.l #1000, %d1
+        divu.l %d1, %d0
+        move.l %d0, (%a1)+
+        .else
         move.l  snap+S_SECONDS, (%a1)+
+        .endif
         lea     str_name, %a0
 2:      move.b  (%a0)+, %d0
         move.b  %d0, (%a1)+
@@ -808,6 +853,10 @@ fmt_na:     .asciz  "CPU --  DSP --"
 
         .section .bss
         .balign 4
+        .ifdef DN2
+        .globl dn2_clock
+dn2_clock: .skip 4
+        .endif
 enabled:    .skip 4             | the toggle (byte 0), off at power-on
         .ifdef  RK_KEYS
         .globl  rk_off

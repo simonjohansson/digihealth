@@ -12,13 +12,24 @@ three rows to SETTINGS:
 - **SYSTEM INFO** shows CPU, DSP, RAM and free sample memory in the top bar.
   A read-only USB diagnostics channel lets `tools/digiusb.py` read the same
   figures, and more, from a computer.
-- **REMOTE KEYS** (on at every power-on; Digitakt only for now) lets `tools/digiusb.py keys` press
+- **REMOTE KEYS** (on at every power-on) lets `tools/digiusb.py keys` press
   the panel's buttons over USB: see [Remote keys](#remote-keys). Off, the
   unit refuses key commands and lets go of any key the computer holds;
   the diagnostics still answer.
 
 On the **Digitone (mk1) and Digitone Keys**, OS 1.43 and 1.44, it is
 SYSTEM INFO alone (digihealth 1.1): see [The Digitone](#the-digitone).
+
+Experimental **Digitone II OS 1.12** support has run on a physical unit
+on the DN2 branch: [build, remote controls, screen readback and validation](dn2/README.md).
+It requires core-dn2 0.3. Its measurement branch adds relative CPU and raw SHARC handler spans over USB;
+1.5 also supports [optional L2 callback counters](dn2/DSP-METRICS.md), pending
+separate physical qualification. 1.6 reads DSP memory (`dsppeek`) through core-dn2 0.3's
+DSP peek. Its `dspbusy` command requires the optional
+[dspbusy-dn2 companion](https://github.com/simonjohansson/elekloader/tree/better-memory/mods/dspbusy-dn2)
+and a SHARC mod; without the companion it reports `no window yet`. The
+measure is time outside the DSP's idle task, not headroom. Total DSP load
+and FAST AUDIO are unavailable.
 
 It is an [elekloader](https://github.com/irpina/elekloader) mod.
 elekloader builds a custom OS file on your own machine, from your stock OS

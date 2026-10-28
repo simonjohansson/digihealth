@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "remote_keys.h"
+#if RK_PRODUCT == 3
+#include <digitone-mk2/core.h>
+#else
 #include "core_candidate.h"
+#endif
 
 #ifndef RK_OS_MINOR
 #error "RK_OS_MINOR must identify the OS port"
@@ -10,14 +14,19 @@
 #endif
 
 static const struct key_position { unsigned char ui, group, mask; } keymap[RK_KEY_COUNT + 1] = {
-#if RK_PRODUCT == 1
+#if RK_PRODUCT == 3
+#define KEY(id, name, code, group, mask) [id] = {code, group, mask},
+#include "dn2/keys.def"
+#elif RK_PRODUCT == 1
 #define KEY(id, name, dc, dg, dm, nc, ng, nm) [id] = {dc, dg, dm},
 #elif RK_PRODUCT == 2
 #define KEY(id, name, dc, dg, dm, nc, ng, nm) [id] = {nc, ng, nm},
 #else
 #error "Unknown key map"
 #endif
+#if RK_PRODUCT != 3
 #include "keys.def"
+#endif
 #undef KEY
 };
 #if RK_PRODUCT == 2
@@ -31,7 +40,12 @@ extern unsigned rk_now(void);
 extern unsigned core_keys_lock(void);
 extern void core_keys_unlock(unsigned sr);
 
-enum { TICKS_PER_MS = 132000, MAX_HOLD_MS = 2000, MAX_TAP_MS = 250 };
+#if RK_PRODUCT == 3
+#define TICKS_PER_MS 1
+#else
+#define TICKS_PER_MS 132000
+#endif
+enum { MAX_HOLD_MS = 2000, MAX_TAP_MS = 250 };
 static unsigned session, operation, action, key, duration, state, reason;
 static unsigned char masks[CORE_KEYS_GROUPS];
 static unsigned held_key, held_start, held_ticks, tap_start;
@@ -70,7 +84,7 @@ static void bitmap(unsigned char *p, unsigned supported)
 }
 
 /* Exact canonical packing prevents an oversized request becoming a valid prefix. */
-static int unpack(const unsigned char *src, unsigned length, unsigned char *dst, unsigned count)
+int rk_unpack(const unsigned char *src, unsigned length, unsigned char *dst, unsigned count)
 {
     unsigned at = 0, out = 0, n, i, header;
     if (length != count + (count + 6) / 7)
@@ -113,7 +127,7 @@ int rk_receive(const unsigned char *packed, unsigned length, unsigned char *repl
     reply[2] = command | 0x80;
     reply[3] = RK_INVALID;
     count = command == RK_CAPS ? 3 : command == RK_ACTION ? 15 : command == RK_STATUS ? 11 : 7;
-    if (!unpack(packed, length, request, count)) return 4;
+    if (!rk_unpack(packed, length, request, count)) return 4;
     reply[3] = RK_OK;
 #if RK_PRODUCT == 2
     if (fw_panel_variant & 0x80000) {
@@ -126,7 +140,7 @@ int rk_receive(const unsigned char *packed, unsigned length, unsigned char *repl
         return 4;
     }
     if (command == RK_CAPS) {
-        put16(reply + 4, 2);
+        put16(reply + 4, RK_PRODUCT == 3 ? 3 : 2);
         reply[6] = RK_PRODUCT; reply[7] = 1; reply[8] = RK_OS_MINOR;
         bitmap(reply + 9, 1);
         put16(reply + 17, 100);
@@ -161,8 +175,16 @@ int rk_receive(const unsigned char *packed, unsigned length, unsigned char *repl
         number = get32(request + 7);
         a = request[11]; k = request[12];
         ms = (unsigned)request[13] << 8 | request[14];
+#if RK_PRODUCT == 3
+        if (!number || (a == RK_TURN && RK_PRODUCT == 3
+            ? k < 1 || k > 9 || !ms || (ms > 30 && ms < 65506)
+            : k < 1 || k > RK_KEY_COUNT || !keymap[k].mask || a < RK_PRESS || a > RK_TAP ||
+              (a == RK_RELEASE ? ms != 0 : !ms || ms > (a == RK_PRESS ? MAX_HOLD_MS : MAX_TAP_MS))))
+#else
         if (!number || k < 1 || k > RK_KEY_COUNT || !keymap[k].mask || a < RK_PRESS || a > RK_TAP ||
-            (a == RK_RELEASE ? ms != 0 : !ms || ms > (a == RK_PRESS ? MAX_HOLD_MS : MAX_TAP_MS))) {
+            (a == RK_RELEASE ? ms != 0 : !ms || ms > (a == RK_PRESS ? MAX_HOLD_MS : MAX_TAP_MS)))
+#endif
+        {
             reply[3] = RK_INVALID;
         } else if (number == operation) {
             if (a != action || k != key || ms != duration) reply[3] = RK_INVALID;
@@ -209,6 +231,15 @@ void rk_tick(void *ctrl)
             core_keys_unlock(sr);
             return;
         }
+#if RK_PRODUCT == 3
+        if (action == RK_TURN) {
+            result = core_encoder_turn(key, (short)duration);
+            if (result == CORE_KEYS_OK) state = RK_COMPLETED;
+            else if (result != CORE_KEYS_BUSY) { state = RK_FAILED; reason = RK_INVALID; }
+            core_keys_unlock(sr);
+            return;
+        }
+#endif
         group = keymap[key].group;
         target = action == RK_RELEASE || tapping ? masks[group] & ~keymap[key].mask
                                                 : masks[group] | keymap[key].mask;

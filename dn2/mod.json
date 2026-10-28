@@ -1,0 +1,104 @@
+{
+ "id": "digihealth",
+ "version": "1.6",
+ "title": "digihealth",
+ "category": "Diagnostics",
+ "author": "irpina",
+ "license": "GPL-2.0-or-later",
+ "description": "Digitone II OS 1.12: heap, relative CPU, raw handler spans and optional measured-L2 callback counters over USB, plus remote controls and screen readback. Total DSP load and peak stack remain unavailable.",
+ "device": "digitone-mk2",
+ "os": "1.12",
+ "sources": [
+  "../sysinfo.s",
+  "../remote_keys.c",
+  "../remote_keys.s",
+  "io.c",
+  "metrics-core.c",
+  "metrics-core.s",
+  "dsp-metrics.c",
+  "dsp-peek.c"
+ ],
+ "defsym": {
+  "DN2": 1,
+  "RK_KEYS": 1,
+  "DHM_CREATE_MAIN": "0x4002e8d0",
+  "DHM_BLOCK_CONTINUE": "0x40025e3e",
+  "DHM_REPLY": "0x800053a4"
+ },
+ "cflags": [
+  "-DRK_PRODUCT=3",
+  "-DRK_OS_MINOR=12"
+ ],
+ "name_string": "digihealth",
+ "subscribe": [
+  {
+   "event": "ev_settings",
+   "fn": "si_settings",
+   "order": 10
+  },
+  {
+   "event": "ev_settings",
+   "fn": "rk_settings",
+   "order": 20
+  },
+  {
+   "event": "ev_tick",
+   "fn": "si_tick",
+   "order": 50
+  },
+  {
+   "event": "ev_tick",
+   "fn": "rk_tick",
+   "order": 60
+  },
+  {
+   "event": "ev_draw",
+   "fn": "si_draw",
+   "order": 50
+  },
+  {
+   "event": "ev_draw",
+   "fn": "dn2_frame",
+   "order": 100
+  },
+  {
+   "event": "ev_sysex",
+   "fn": "dn2_sysex",
+   "order": 50
+  },
+  {
+   "event": "ev_tick",
+   "fn": "dn2_tick",
+   "order": 70
+  }
+ ],
+ "weak": [
+  "r_on",
+  "r_fault"
+ ],
+ "requires": [
+  "core"
+ ],
+ "resources": {
+  "core": "0.3",
+  "names": [
+   "settings:SYSTEM INFO",
+   "settings:REMOTE KEYS",
+   "sysex:0x7d"
+  ]
+ },
+ "sites": [
+  {
+   "addr": "0x400cf24e",
+   "stock": "4eb94002e8d0",
+   "op": "jmp",
+   "target": "dhm_idle_hook"
+  },
+  {
+   "addr": "0x40025e36",
+   "stock": "4e56ff1448d73fff",
+   "op": "jmp",
+   "target": "dhm_block_hook"
+  }
+ ]
+}
